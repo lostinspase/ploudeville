@@ -4,11 +4,13 @@
     that:
       - app_repo_url is string
       - app_repo_url | length > 0
+      - "'YOUR_ORG/YOUR_REPO' not in app_repo_url"
       - public_domain is string
       - public_domain | length > 0
       - family_web_secret is string
       - family_web_secret | length >= 24
-    fail_msg: "Set app_repo_url, public_domain, and a strong family_web_secret in group_vars/all.yml"
+      - family_web_secret != "CHANGE-ME-TO-A-LONG-RANDOM-SECRET"
+    fail_msg: "Set a real app_repo_url, public_domain, and strong family_web_secret in group_vars/all.yml"
 
 - name: Install required apt packages
   ansible.builtin.apt:
@@ -88,6 +90,23 @@
     owner: "{{ app_user }}"
     group: "{{ app_group }}"
     mode: "0755"
+
+- name: Check if sqlite database already exists
+  ansible.builtin.stat:
+    path: "{{ app_source_dir }}/data/family.db"
+  register: app_db_file
+
+- name: Seed sqlite database from local backup (optional, first deploy)
+  ansible.builtin.copy:
+    src: "{{ app_db_seed_local_path }}"
+    dest: "{{ app_source_dir }}/data/family.db"
+    owner: "{{ app_user }}"
+    group: "{{ app_group }}"
+    mode: "0640"
+  when:
+    - app_db_seed_local_path | default("") | length > 0
+    - not app_db_file.stat.exists
+  notify: Restart ploudeville
 
 - name: Render application environment file
   ansible.builtin.template:

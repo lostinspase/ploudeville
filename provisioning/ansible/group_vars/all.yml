@@ -7,12 +7,14 @@ app_source_dir: "{{ app_root }}/app"
 app_venv_dir: "{{ app_root }}/venv"
 app_repo_url: "git@github.com:YOUR_ORG/YOUR_REPO.git"
 app_repo_version: main
+# Optional local SQLite file path on the Ansible controller for first deploy migration.
+app_db_seed_local_path: ""
 
 app_bind_host: 127.0.0.1
 app_port: 18000
 
-# DNS host served by Nginx.
-public_domain: ploudeville.example.com
+# DNS host served by Nginx. For LAN-only access you can use the host IP.
+public_domain: 10.0.100.167
 
 # Systemd and reverse proxy settings.
 systemd_unit_name: "{{ app_name }}.service"
@@ -20,7 +22,7 @@ nginx_site_name: "{{ app_name }}.conf"
 nginx_enable_default_site: false
 
 # Mandatory app secret used for cookie signing.
-family_web_secret: "CHANGE-ME-TO-A-LONG-RANDOM-SECRET"
+family_web_secret: "d67f05893046e360d207ff301d72735cc656d5ab4503b5f3c4ba4ba5fa2d2a6f"
 
 # Optional environment variables consumed by src.family_system.web
 app_env:
