@@ -1,0 +1,144 @@
+---
+- name: Assert required deployment variables
+  ansible.builtin.assert:
+    that:
+      - app_repo_url is string
+      - app_repo_url | length > 0
+      - public_domain is string
+      - public_domain | length > 0
+      - family_web_secret is string
+      - family_web_secret | length >= 24
+    fail_msg: "Set app_repo_url, public_domain, and a strong family_web_secret in group_vars/all.yml"
+
+- name: Install required apt packages
+  ansible.builtin.apt:
+    name:
+      - git
+      - python3
+      - python3-venv
+      - nginx
+    update_cache: true
+    state: present
+
+- name: Ensure app group exists
+  ansible.builtin.group:
+    name: "{{ app_group }}"
+    state: present
+
+- name: Ensure app user exists
+  ansible.builtin.user:
+    name: "{{ app_user }}"
+    group: "{{ app_group }}"
+    shell: /usr/sbin/nologin
+    system: true
+    create_home: false
+    state: present
+
+- name: Ensure app directories exist
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner | default(app_user) }}"
+    group: "{{ item.group | default(app_group) }}"
+    mode: "{{ item.mode | default('0755') }}"
+  loop:
+    - { path: "{{ app_root }}" }
+    - { path: "{{ app_source_dir }}" }
+    - { path: "{{ app_venv_dir }}" }
+    - { path: "/etc/{{ app_name }}", owner: "root", group: "root", mode: "0750" }
+
+- name: Checkout/update application repository
+  ansible.builtin.git:
+    repo: "{{ app_repo_url }}"
+    version: "{{ app_repo_version }}"
+    dest: "{{ app_source_dir }}"
+    update: true
+  become_user: "{{ app_user }}"
+  notify: Restart ploudeville
+
+- name: Ensure app source ownership is correct
+  ansible.builtin.file:
+    path: "{{ app_source_dir }}"
+    state: directory
+    owner: "{{ app_user }}"
+    group: "{{ app_group }}"
+    recurse: true
+
+- name: Ensure python virtual environment exists
+  ansible.builtin.command:
+    cmd: "python3 -m venv {{ app_venv_dir }}"
+    creates: "{{ app_venv_dir }}/bin/activate"
+
+- name: Check for requirements.txt
+  ansible.builtin.stat:
+    path: "{{ app_source_dir }}/requirements.txt"
+  register: requirements_file
+
+- name: Install pip requirements when present
+  ansible.builtin.pip:
+    requirements: "{{ app_source_dir }}/requirements.txt"
+    virtualenv: "{{ app_venv_dir }}"
+  when: requirements_file.stat.exists
+  notify: Restart ploudeville
+
+- name: Ensure data directory exists for sqlite
+  ansible.builtin.file:
+    path: "{{ app_source_dir }}/data"
+    state: directory
+    owner: "{{ app_user }}"
+    group: "{{ app_group }}"
+    mode: "0755"
+
+- name: Render application environment file
+  ansible.builtin.template:
+    src: ploudeville.env.j2
+    dest: "/etc/{{ app_name }}/{{ app_name }}.env"
+    owner: root
+    group: root
+    mode: "0640"
+  notify: Restart ploudeville
+
+- name: Install systemd service unit
+  ansible.builtin.template:
+    src: ploudeville.service.j2
+    dest: "/etc/systemd/system/{{ systemd_unit_name }}"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart ploudeville
+
+- name: Ensure ploudeville service is enabled and started
+  ansible.builtin.systemd:
+    name: "{{ systemd_unit_name }}"
+    enabled: true
+    state: started
+    daemon_reload: true
+
+- name: Install nginx site config
+  ansible.builtin.template:
+    src: ploudeville-nginx.conf.j2
+    dest: "/etc/nginx/sites-available/{{ nginx_site_name }}"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload nginx
+
+- name: Enable nginx site
+  ansible.builtin.file:
+    src: "/etc/nginx/sites-available/{{ nginx_site_name }}"
+    dest: "/etc/nginx/sites-enabled/{{ nginx_site_name }}"
+    state: link
+  notify: Reload nginx
+
+- name: Disable nginx default site when requested
+  ansible.builtin.file:
+    path: /etc/nginx/sites-enabled/default
+    state: absent
+  when: not nginx_enable_default_site
+  notify: Reload nginx
+
+- name: Ensure nginx service is enabled and running
+  ansible.builtin.systemd:
+    name: nginx
+    enabled: true
+    state: started

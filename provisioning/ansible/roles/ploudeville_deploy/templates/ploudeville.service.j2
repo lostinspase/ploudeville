@@ -1,0 +1,16 @@
+[Unit]
+Description=Ploudeville Family App
+After=network.target
+
+[Service]
+Type=simple
+User={{ app_user }}
+Group={{ app_group }}
+WorkingDirectory={{ app_source_dir }}
+EnvironmentFile=/etc/{{ app_name }}/{{ app_name }}.env
+ExecStart={{ app_venv_dir }}/bin/python -m src.family_system.web --host {{ app_bind_host }} --port {{ app_port }}
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

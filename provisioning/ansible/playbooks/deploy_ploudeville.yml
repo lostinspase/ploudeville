@@ -1,0 +1,6 @@
+---
+- name: Deploy Ploudeville app server
+  hosts: webservers
+  become: true
+  roles:
+    - role: ploudeville_deploy

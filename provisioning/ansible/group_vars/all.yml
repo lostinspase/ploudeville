@@ -1,0 +1,44 @@
+# Global deployment settings for Ploudeville.
+app_name: ploudeville
+app_user: ploudeville
+app_group: ploudeville
+app_root: /opt/ploudeville
+app_source_dir: "{{ app_root }}/app"
+app_venv_dir: "{{ app_root }}/venv"
+app_repo_url: "git@github.com:YOUR_ORG/YOUR_REPO.git"
+app_repo_version: main
+
+app_bind_host: 127.0.0.1
+app_port: 18000
+
+# DNS host served by Nginx.
+public_domain: ploudeville.example.com
+
+# Systemd and reverse proxy settings.
+systemd_unit_name: "{{ app_name }}.service"
+nginx_site_name: "{{ app_name }}.conf"
+nginx_enable_default_site: false
+
+# Mandatory app secret used for cookie signing.
+family_web_secret: "CHANGE-ME-TO-A-LONG-RANDOM-SECRET"
+
+# Optional environment variables consumed by src.family_system.web
+app_env:
+  FAMILY_WEB_SECRET: "{{ family_web_secret }}"
+  SMTP_HOST: ""
+  SMTP_PORT: "587"
+  SMTP_USER: ""
+  SMTP_PASS: ""
+  SMTP_FROM: ""
+  APEIRON_SMS_USER: ""
+  APEIRON_SMS_TOKEN: ""
+  APEIRON_API_KEY: ""
+  APEIRON_SMS_FROM: ""
+  APEIRON_SMS_ENDPOINT: ""
+  TICKETMASTER_API_KEY: ""
+  IOS_SYNC_TOKEN: ""
+  READING_CHATBOT_API_URL: ""
+  READING_CHATBOT_API_KEY: ""
+  GROQ_API_KEY: ""
+  GROQ_MODEL: "llama-3.1-8b-instant"
+  GROQ_API_URL: "https://api.groq.com/openai/v1/chat/completions"
