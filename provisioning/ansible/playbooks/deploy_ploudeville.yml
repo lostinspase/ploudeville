@@ -2,5 +2,8 @@
 - name: Deploy Ploudeville app server
   hosts: webservers
   become: true
+  vars_files:
+    - ../group_vars/all.yml
+    - ../group_vars/vault.yml
   roles:
     - role: ploudeville_deploy

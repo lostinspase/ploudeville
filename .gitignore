@@ -4,3 +4,4 @@ __pycache__/
 .venv/
 data/*.db
 .DS_Store
+provisioning/ansible/.vault_pass.txt

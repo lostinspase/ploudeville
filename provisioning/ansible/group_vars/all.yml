@@ -5,7 +5,7 @@ app_group: ploudeville
 app_root: /opt/ploudeville
 app_source_dir: "{{ app_root }}/app"
 app_venv_dir: "{{ app_root }}/venv"
-app_repo_url: "git@github.com:YOUR_ORG/YOUR_REPO.git"
+app_repo_url: "https://github.com/lostinspase/ploudeville.git"
 app_repo_version: main
 # Optional local SQLite file path on the Ansible controller for first deploy migration.
 app_db_seed_local_path: ""
@@ -22,7 +22,7 @@ nginx_site_name: "{{ app_name }}.conf"
 nginx_enable_default_site: false
 
 # Mandatory app secret used for cookie signing.
-family_web_secret: "d67f05893046e360d207ff301d72735cc656d5ab4503b5f3c4ba4ba5fa2d2a6f"
+family_web_secret: "{{ vault_family_web_secret }}"
 
 # Optional environment variables consumed by src.family_system.web
 app_env:
