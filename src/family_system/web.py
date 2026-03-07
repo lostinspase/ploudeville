@@ -28,10 +28,12 @@ from .repository import (
     add_reward,
     add_task,
     add_task_schedule,
+    add_weekly_allowance_plan_item,
     apply_birthday_treatment,
     apply_parent_birthday_treatment,
     complete_pet_care,
     complete_donation_pledge,
+    clone_weekly_allowance_override_from_default,
     consume_child_pin_reset_token,
     consume_parent_reset_token,
     create_donation_pledge,
@@ -39,6 +41,8 @@ from .repository import (
     count_pet_adoptions,
     create_parent_reset_token,
     create_child_pin_reset_token,
+    current_week_key,
+    delete_weekly_allowance_plan_item,
     delete_task_schedule,
     generate_pet_help_messages,
     generate_task_instances,
@@ -47,6 +51,8 @@ from .repository import (
     get_pet_weekly_dashboard,
     get_parent_reset_emails,
     get_parent_reset_text_numbers,
+    get_weekly_allowance_default_amount,
+    get_weekly_allowance_status,
     list_balances,
     apply_daily_wallet_interest,
     get_wallet_daily_interest_rate_percent,
@@ -73,6 +79,7 @@ from .repository import (
     list_parents,
     list_today_birthdays,
     list_today_parent_birthdays,
+    list_weekly_allowance_plan_items,
     list_rewards,
     list_service_entries,
     list_service_organizations,
@@ -92,6 +99,8 @@ from .repository import (
     set_task_schedule_active,
     set_default_pet,
     set_child_pin,
+    set_weekly_allowance_default_amount,
+    set_weekly_allowance_override_amount,
     update_child_contact_info,
     update_parent_contact_info,
     submit_task_instance,
@@ -628,6 +637,23 @@ def _base_styles() -> str:
     @media (min-width: 930px) { .motd-row { grid-template-columns: 1fr 1fr; } }
     .two-col { display: grid; grid-template-columns: 1fr; gap: 12px; }
     @media (min-width: 930px) { .two-col { grid-template-columns: 1.15fr 0.85fr; } }
+    .parent-shell { display: flex; flex-direction: column; gap: 12px; }
+    .parent-header-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+    .tabbar {
+      display: flex; gap: 8px; flex-wrap: wrap; padding: 8px;
+      background: rgba(255, 250, 239, 0.88); border: 1px solid #e7d9b8; border-radius: 14px;
+      position: sticky; top: 10px; z-index: 5; backdrop-filter: blur(6px);
+    }
+    .tabbar button {
+      background: #f4ead0; color: var(--ink); border: 1px solid #d8c7a0;
+      font-weight: 700;
+    }
+    .tabbar button.active {
+      background: linear-gradient(120deg, var(--brand), #1f8a7b);
+      color: #fff;
+      box-shadow: 0 5px 14px rgba(18, 110, 97, 0.22);
+    }
+    .parent-panel-column { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
     .card {
       background: var(--card); border: 1px solid #e7d9b8; border-radius: var(--radius);
       padding: 12px; box-shadow: 0 3px 9px rgba(33, 42, 40, 0.05);
@@ -892,6 +918,7 @@ def _child_page(child_id: int, msg: str = "") -> tuple[str, list[tuple[str, str]
     available_allowance = get_available_allowance_for_payout(child_id)
     pending = list_task_completions(status="pending", child_id=child_id)
     messages = list_messages(child_id=child_id, limit=50)
+    weekly_allowance = get_weekly_allowance_status(child_id)
 
     due_rows = []
     for item in due_items:
@@ -1111,6 +1138,13 @@ def _child_page(child_id: int, msg: str = "") -> tuple[str, list[tuple[str, str]
         </div>
 
         <div class="card">
+          <h3>Weekly Allowance ({weekly_allowance['week_key']})</h3>
+          <p class="muted">Plan source: {escape(str(weekly_allowance['plan_source']))} | Progress: {weekly_allowance['approved_count']} / {weekly_allowance['total_planned']} chores</p>
+          <p class="muted">Weekly allowance: ${float(weekly_allowance['allowance_amount']):.2f} | Credited: {'yes' if weekly_allowance['credited'] else 'not yet'}</p>
+          <p class="muted">Default amount: ${float(weekly_allowance['default_amount']):.2f}{'' if weekly_allowance['override_amount'] is None else f" | Override amount: ${float(weekly_allowance['override_amount']):.2f}"}</p>
+        </div>
+
+        <div class="card">
           <h3>Due Tasks</h3>
           <table>
             <thead><tr><th>Task</th><th>Due Date</th><th>Status</th><th>Action</th></tr></thead>
@@ -1323,7 +1357,9 @@ def _parent_page(
     parents = list_parents(active_only=True)
     parent_birthdays = list_today_parent_birthdays()
     schedules = list_task_schedules(active_only=not include_inactive)
+    weekly_plan_items = list_weekly_allowance_plan_items(include_inactive=include_inactive)
     balances = list_balances()
+    current_week = current_week_key()
     preset = interest_preset.strip().lower()
     interest_from_value = interest_date_from.strip()
     interest_to_value = interest_date_to.strip()
@@ -1392,6 +1428,14 @@ def _parent_page(
             concert_search_error = str(err)
     pending = list_task_completions(status="pending")
     messages = list_messages(limit=100)
+    weekly_default_amounts = {
+        int(child["id"]): get_weekly_allowance_default_amount(int(child["id"]))
+        for child in children
+    }
+    weekly_status_rows_data = [
+        (child, get_weekly_allowance_status(int(child["id"]), current_week))
+        for child in children
+    ]
 
     pending_rows = "".join(
         f"""
@@ -1454,6 +1498,59 @@ def _parent_page(
         </tr>
         """
         for s in schedules
+    )
+    weekday_labels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+    weekly_default_rows = "".join(
+        f"""
+        <tr>
+          <td>{escape(str(item['child_name']))}</td>
+          <td>${float(weekly_default_amounts.get(int(item['child_id']), 0.0)):.2f}</td>
+          <td>{escape(str(item['task_name']))}</td>
+          <td>{weekday_labels[int(item['day_of_week'])]}</td>
+          <td>{escape(str(item.get('due_time') or '-'))}</td>
+          <td>
+            <form method="post" action="/delete-weekly-allowance-item">
+              <input type="hidden" name="schedule_id" value="{item['id']}" />
+              <button type="submit">Delete</button>
+            </form>
+          </td>
+        </tr>
+        """
+        for item in weekly_plan_items
+        if str(item["plan_scope"]) == "weekly_allowance_default"
+    )
+    weekly_override_rows = "".join(
+        f"""
+        <tr>
+          <td>{escape(str(item['child_name']))}</td>
+          <td>{escape(str(item.get('week_key') or ''))}</td>
+          <td>${float(get_weekly_allowance_status(int(item['child_id']), str(item['week_key']))['allowance_amount']):.2f}</td>
+          <td>{escape(str(item['task_name']))}</td>
+          <td>{weekday_labels[int(item['day_of_week'])]}</td>
+          <td>{escape(str(item.get('due_time') or '-'))}</td>
+          <td>
+            <form method="post" action="/delete-weekly-allowance-item">
+              <input type="hidden" name="schedule_id" value="{item['id']}" />
+              <button type="submit">Delete</button>
+            </form>
+          </td>
+        </tr>
+        """
+        for item in weekly_plan_items
+        if str(item["plan_scope"]) == "weekly_allowance_override" and str(item.get("week_key") or "") == current_week
+    )
+    weekly_status_rows = "".join(
+        f"""
+        <tr>
+          <td>{escape(str(child['name']))}</td>
+          <td>{escape(str(status['week_key']))}</td>
+          <td>{escape(str(status['plan_source']))}</td>
+          <td>{status['approved_count']} / {status['total_planned']}</td>
+          <td>${float(status['allowance_amount']):.2f}</td>
+          <td>{'yes' if status['credited'] else 'no'}</td>
+        </tr>
+        """
+        for child, status in weekly_status_rows_data
     )
     balance_rows = "".join(
         f"<tr><td>{escape(str(b['child_name']))}</td><td>{escape(str(b['asset_type']))}</td><td>{float(b['balance']):.2f}</td></tr>"
@@ -1761,25 +1858,26 @@ def _parent_page(
     )
 
     body = f"""
-    <section class="two-col parent-panel">
-      <div>
-        <h2>Parent Panel</h2>
-        {"<p class='msg'>Parent birthday today: " + ", ".join(escape(str(p["name"])) for p in parent_birthdays) + "</p>" if parent_birthdays else ""}
-        <form method="post" action="/parent-logout"><button type="submit">Sign Out</button></form>
-        <div class="card" id="parent-view-card">
-          <h3>Panel View</h3>
-          <p class="muted">Choose a menu view to focus on one area.</p>
-          <select id="parent-view-select">
-            <option value="all">All Sections</option>
-            <option value="money">Money &amp; Rewards</option>
-            <option value="reading">Reading</option>
-            <option value="schedule">Schedule &amp; Activities</option>
-            <option value="communication">Communication &amp; Alerts</option>
-            <option value="content">Daily Content</option>
-            <option value="pets">Pets</option>
-            <option value="admin">Admin</option>
-          </select>
+    <section class="parent-shell">
+      <div class="parent-header-row">
+        <div>
+          <h2>Parent Panel</h2>
+          {"<p class='msg'>Parent birthday today: " + ", ".join(escape(str(p["name"])) for p in parent_birthdays) + "</p>" if parent_birthdays else ""}
         </div>
+        <form method="post" action="/parent-logout"><button type="submit">Sign Out</button></form>
+      </div>
+      <div class="tabbar" id="parent-tabbar" aria-label="Parent panel sections">
+        <button type="button" data-view="daily">Daily Ops</button>
+        <button type="button" data-view="money">Allowance &amp; Money</button>
+        <button type="button" data-view="schedule">Schedule</button>
+        <button type="button" data-view="reading">Reading</button>
+        <button type="button" data-view="communication">Messages &amp; Alerts</button>
+        <button type="button" data-view="content">Daily Content</button>
+        <button type="button" data-view="pets">Pets</button>
+        <button type="button" data-view="admin">Admin</button>
+      </div>
+      <section class="two-col parent-panel">
+      <div class="parent-panel-column">
         <div class="card">
           <div class="stack">
             <form method="get" action="/parent">
@@ -1817,6 +1915,80 @@ def _parent_page(
           <h3>Task Schedules</h3>
           <table><thead><tr><th>ID</th><th>Task</th><th>Child</th><th>Cadence</th><th>Weekday</th><th>Due Time</th><th>Status</th><th>Actions</th></tr></thead>
           <tbody>{schedule_rows if schedule_rows else '<tr><td colspan="8">No schedules yet.</td></tr>'}</tbody></table>
+        </div>
+
+        <div class="card">
+          <h3>Weekly Allowance Plans</h3>
+          <p class="muted">Set a weekly allowance amount per child, define the default weekly chore baseline, and optionally override the current week. Weekly-plan chores do not pay per task; the allowance is credited once the effective week plan is fully approved.</p>
+          <h4>Current Week Status ({current_week})</h4>
+          <table><thead><tr><th>Child</th><th>Week</th><th>Source</th><th>Progress</th><th>Allowance</th><th>Credited</th></tr></thead>
+          <tbody>{weekly_status_rows if weekly_status_rows else '<tr><td colspan="6">No weekly allowance plans yet.</td></tr>'}</tbody></table>
+          <div class="two-col">
+            <div>
+              <h4>Default Week</h4>
+              <form method="post" action="/set-weekly-allowance-default">
+                <select name="child_id" required>
+                  <option value="">Child</option>
+                  {''.join(f'<option value="{c["id"]}">{escape(str(c["name"]))}</option>' for c in children)}
+                </select>
+                <input type="number" min="0" step="0.01" name="amount" placeholder="Weekly amount" required />
+                <button type="submit">Save Default Amount</button>
+              </form>
+              <form method="post" action="/add-weekly-allowance-item">
+                <input type="hidden" name="scope" value="default" />
+                <select name="child_id" required>
+                  <option value="">Child</option>
+                  {''.join(f'<option value="{c["id"]}">{escape(str(c["name"]))}</option>' for c in children)}
+                </select>
+                <select name="task_id" required>
+                  <option value="">Required task</option>
+                  {''.join(f'<option value="{t["id"]}">{escape(str(t["name"]))}</option>' for t in tasks if str(t.get("rank")) == "required")}
+                </select>
+                <input type="number" name="day_of_week" min="0" max="6" placeholder="weekday 0-6" required />
+                <input name="due_time" placeholder="HH:MM" />
+                <button type="submit">Add Default Chore</button>
+              </form>
+              <table><thead><tr><th>Child</th><th>Amount</th><th>Task</th><th>Weekday</th><th>Due</th><th>Action</th></tr></thead>
+              <tbody>{weekly_default_rows if weekly_default_rows else '<tr><td colspan="6">No default-week chores yet.</td></tr>'}</tbody></table>
+            </div>
+            <div>
+              <h4>Current Week Override</h4>
+              <form method="post" action="/clone-weekly-allowance-override">
+                <select name="child_id" required>
+                  <option value="">Child</option>
+                  {''.join(f'<option value="{c["id"]}">{escape(str(c["name"]))}</option>' for c in children)}
+                </select>
+                <input name="week_key" value="{current_week}" required />
+                <button type="submit">Clone Default To Override</button>
+              </form>
+              <form method="post" action="/set-weekly-allowance-override">
+                <select name="child_id" required>
+                  <option value="">Child</option>
+                  {''.join(f'<option value="{c["id"]}">{escape(str(c["name"]))}</option>' for c in children)}
+                </select>
+                <input name="week_key" value="{current_week}" required />
+                <input type="number" min="0" step="0.01" name="amount" placeholder="Override amount" required />
+                <button type="submit">Save Override Amount</button>
+              </form>
+              <form method="post" action="/add-weekly-allowance-item">
+                <input type="hidden" name="scope" value="override" />
+                <select name="child_id" required>
+                  <option value="">Child</option>
+                  {''.join(f'<option value="{c["id"]}">{escape(str(c["name"]))}</option>' for c in children)}
+                </select>
+                <input name="week_key" value="{current_week}" required />
+                <select name="task_id" required>
+                  <option value="">Required task</option>
+                  {''.join(f'<option value="{t["id"]}">{escape(str(t["name"]))}</option>' for t in tasks if str(t.get("rank")) == "required")}
+                </select>
+                <input type="number" name="day_of_week" min="0" max="6" placeholder="weekday 0-6" required />
+                <input name="due_time" placeholder="HH:MM" />
+                <button type="submit">Add Override Chore</button>
+              </form>
+              <table><thead><tr><th>Child</th><th>Week</th><th>Amount</th><th>Task</th><th>Weekday</th><th>Due</th><th>Action</th></tr></thead>
+              <tbody>{weekly_override_rows if weekly_override_rows else '<tr><td colspan="7">No current-week override chores yet.</td></tr>'}</tbody></table>
+            </div>
+          </div>
         </div>
 
         <div class="card">
@@ -1992,7 +2164,7 @@ def _parent_page(
         </div>
       </div>
 
-      <div>
+      <div class="parent-panel-column">
         <div class="card">
           <h3>Set Child PIN</h3>
           <form method="post" action="/set-child-pin">
@@ -2230,20 +2402,24 @@ def _parent_page(
           <tbody>{notification_attempt_rows if notification_attempt_rows else '<tr><td colspan="7">No notification attempts yet.</td></tr>'}</tbody></table>
         </div>
       </div>
+      </section>
     </section>
     <script>
       (function() {{
-        const select = document.getElementById("parent-view-select");
+        const tabbar = document.getElementById("parent-tabbar");
         const panel = document.querySelector(".parent-panel");
-        if (!select || !panel) return;
-        const cards = Array.from(panel.querySelectorAll(".card")).filter((card) => card.id !== "parent-view-card");
+        if (!tabbar || !panel) return;
+        const buttons = Array.from(tabbar.querySelectorAll("button[data-view]"));
+        const cards = Array.from(panel.querySelectorAll(".card"));
+        const columns = Array.from(panel.querySelectorAll(".parent-panel-column"));
         const classify = (card) => {{
           const h3 = card.querySelector("h3");
           const title = (h3 ? h3.textContent : "").toLowerCase();
+          if (title.includes("pending reviews") || title.includes("weekly allowance")) return "daily";
           if (title.includes("reading review")) return "reading";
           if (title.includes("schedule") || title.includes("activity") || title.includes("holiday")) return "schedule";
-          if (title.includes("notification") || title.includes("ios usage") || title.includes("contact settings")) return "communication";
-          if (title.includes("message of the day") || title.includes("fun fact") || title === "messages") return "content";
+          if (title.includes("message of the day") || title.includes("fun fact")) return "content";
+          if (title.includes("message") || title.includes("notification") || title.includes("contact") || title.includes("send test")) return "communication";
           if (title.includes("pet")) return "pets";
           if (
             title.includes("wallet") ||
@@ -2262,20 +2438,31 @@ def _parent_page(
           return "admin";
         }};
         const apply = (view) => {{
+          buttons.forEach((button) => {{
+            button.classList.toggle("active", button.dataset.view === view);
+            button.setAttribute("aria-pressed", button.dataset.view === view ? "true" : "false");
+          }});
           cards.forEach((card) => {{
             const section = classify(card);
-            card.style.display = (view === "all" || view === section) ? "" : "none";
+            card.style.display = view === section ? "" : "none";
           }});
-          try {{ localStorage.setItem("parent-panel-view", view); }} catch (err) {{}}
+          columns.forEach((column) => {{
+            const hasVisible = Array.from(column.querySelectorAll(".card")).some((card) => card.style.display !== "none");
+            column.style.display = hasVisible ? "" : "none";
+          }});
+          panel.style.gridTemplateColumns =
+            columns.filter((column) => column.style.display !== "none").length <= 1 ? "1fr" : "";
+          try {{ localStorage.setItem("parent-panel-tab", view); }} catch (err) {{}}
         }};
-        let initial = "all";
+        let initial = "daily";
         try {{
-          const saved = localStorage.getItem("parent-panel-view");
-          if (saved) initial = saved;
+          const saved = localStorage.getItem("parent-panel-tab");
+          if (saved && buttons.some((button) => button.dataset.view === saved)) initial = saved;
         }} catch (err) {{}}
-        select.value = initial;
         apply(initial);
-        select.addEventListener("change", () => apply(select.value));
+        buttons.forEach((button) => {{
+          button.addEventListener("click", () => apply(button.dataset.view || "daily"));
+        }});
       }})();
     </script>
     """
@@ -2324,6 +2511,11 @@ def create_app() -> Callable:
                 "/set-child-pin",
                 "/add-task",
                 "/add-reward",
+                "/set-weekly-allowance-default",
+                "/set-weekly-allowance-override",
+                "/add-weekly-allowance-item",
+                "/delete-weekly-allowance-item",
+                "/clone-weekly-allowance-override",
                 "/add-schedule",
                 "/update-schedule",
                 "/toggle-schedule-active",
@@ -3117,6 +3309,44 @@ def create_app() -> Callable:
             elif method == "POST" and path == "/add-reward":
                 add_reward(name=form.get("name", ""), reward_type=form.get("type", ""), cost=float(form.get("cost", "0")))
                 result = _redirect("/parent?msg=Reward+added")
+            elif method == "POST" and path == "/set-weekly-allowance-default":
+                updated = set_weekly_allowance_default_amount(
+                    child_id=int(form.get("child_id", "0")),
+                    amount=float(form.get("amount", "0")),
+                )
+                if not updated:
+                    raise ValueError("Child not found")
+                result = _redirect("/parent?msg=Default+weekly+allowance+saved")
+            elif method == "POST" and path == "/set-weekly-allowance-override":
+                updated = set_weekly_allowance_override_amount(
+                    child_id=int(form.get("child_id", "0")),
+                    week_key=form.get("week_key", ""),
+                    amount=float(form.get("amount", "0")),
+                )
+                if not updated:
+                    raise ValueError("Child not found")
+                result = _redirect("/parent?msg=Weekly+allowance+override+saved")
+            elif method == "POST" and path == "/add-weekly-allowance-item":
+                scope = form.get("scope", "default").strip().lower()
+                add_weekly_allowance_plan_item(
+                    child_id=int(form.get("child_id", "0")),
+                    task_id=int(form.get("task_id", "0")),
+                    day_of_week=int(form.get("day_of_week", "0")),
+                    due_time=form.get("due_time", "") or None,
+                    week_key=form.get("week_key", "") if scope == "override" else None,
+                )
+                result = _redirect("/parent?msg=Weekly+allowance+chore+saved")
+            elif method == "POST" and path == "/delete-weekly-allowance-item":
+                deleted = delete_weekly_allowance_plan_item(int(form.get("schedule_id", "0")))
+                if not deleted:
+                    raise ValueError("Weekly allowance plan item not found")
+                result = _redirect("/parent?msg=Weekly+allowance+chore+deleted")
+            elif method == "POST" and path == "/clone-weekly-allowance-override":
+                copied = clone_weekly_allowance_override_from_default(
+                    child_id=int(form.get("child_id", "0")),
+                    week_key=form.get("week_key", ""),
+                )
+                result = _redirect(f"/parent?{urlencode({'msg': f'Cloned {copied} default chores into override'})}")
             elif method == "POST" and path == "/add-schedule":
                 child_id_raw = form.get("child_id", "")
                 day_raw = form.get("day_of_week", "")

@@ -229,6 +229,8 @@ def init_db() -> None:
                 cadence TEXT NOT NULL CHECK(cadence IN ('daily', 'weekly')),
                 day_of_week INTEGER CHECK(day_of_week BETWEEN 0 AND 6),
                 due_time TEXT,
+                plan_scope TEXT NOT NULL DEFAULT 'standard' CHECK(plan_scope IN ('standard', 'weekly_allowance_default', 'weekly_allowance_override')),
+                week_key TEXT,
                 active INTEGER NOT NULL DEFAULT 1,
                 created_at TEXT NOT NULL DEFAULT (datetime('now'))
             );
@@ -384,6 +386,31 @@ def init_db() -> None:
                 sent_at TEXT,
                 sent_by TEXT,
                 transfer_reference TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS weekly_allowance_settings (
+                child_id INTEGER PRIMARY KEY REFERENCES children(id),
+                default_amount REAL NOT NULL DEFAULT 0 CHECK(default_amount >= 0),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
+            CREATE TABLE IF NOT EXISTS weekly_allowance_overrides (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                child_id INTEGER NOT NULL REFERENCES children(id),
+                week_key TEXT NOT NULL,
+                allowance_amount REAL NOT NULL CHECK(allowance_amount >= 0),
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                UNIQUE(child_id, week_key)
+            );
+
+            CREATE TABLE IF NOT EXISTS weekly_allowance_credits (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                child_id INTEGER NOT NULL REFERENCES children(id),
+                week_key TEXT NOT NULL,
+                allowance_amount REAL NOT NULL CHECK(allowance_amount >= 0),
+                ledger_entry_id INTEGER REFERENCES ledger_entries(id),
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                UNIQUE(child_id, week_key)
             );
 
             CREATE TABLE IF NOT EXISTS reading_logs (
@@ -637,6 +664,10 @@ def init_db() -> None:
             conn.execute("ALTER TABLE children ADD COLUMN default_pet_name TEXT")
         if not _column_exists(conn, "task_completions", "task_instance_id"):
             conn.execute("ALTER TABLE task_completions ADD COLUMN task_instance_id INTEGER REFERENCES task_instances(id)")
+        if not _column_exists(conn, "task_schedules", "plan_scope"):
+            conn.execute("ALTER TABLE task_schedules ADD COLUMN plan_scope TEXT NOT NULL DEFAULT 'standard'")
+        if not _column_exists(conn, "task_schedules", "week_key"):
+            conn.execute("ALTER TABLE task_schedules ADD COLUMN week_key TEXT")
         if not _column_exists(conn, "pet_species", "is_custom"):
             conn.execute("ALTER TABLE pet_species ADD COLUMN is_custom INTEGER NOT NULL DEFAULT 0")
         if not _column_exists(conn, "pet_species", "created_by_child_id"):

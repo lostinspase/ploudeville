@@ -15,6 +15,8 @@ from .db import get_connection
 
 WEEKLY_REQUIRED_MINIMUM = 3
 CARE_TYPES = ("feed", "water", "nurture")
+WEEKLY_ALLOWANCE_DEFAULT_SCOPE = "weekly_allowance_default"
+WEEKLY_ALLOWANCE_OVERRIDE_SCOPE = "weekly_allowance_override"
 
 
 def _pin_hash(pin: str) -> str:
@@ -53,6 +55,11 @@ def current_week_key(on_date: date | None = None) -> str:
     d = on_date or date.today()
     iso_year, iso_week, _ = d.isocalendar()
     return f"{iso_year}-W{iso_week:02d}"
+
+
+def _normalize_week_key(week_key: str) -> str:
+    start, _ = _week_bounds(week_key.strip())
+    return current_week_key(start)
 
 
 def _week_bounds(week_key: str) -> tuple[date, date]:
@@ -3379,6 +3386,55 @@ def record_task_completion(
         return int(cursor.lastrowid)
 
 
+def _award_weekly_allowance_if_earned_conn(conn: sqlite3.Connection, completion_id: int) -> None:
+    row = conn.execute(
+        """
+        SELECT
+            tc.child_id,
+            ti.due_date,
+            ts.plan_scope
+        FROM task_completions tc
+        JOIN task_instances ti ON ti.id = tc.task_instance_id
+        JOIN task_schedules ts ON ts.id = ti.schedule_id
+        WHERE tc.id = ?
+        """,
+        (completion_id,),
+    ).fetchone()
+    if not row:
+        return
+    plan_scope = str(row["plan_scope"] or "standard")
+    if plan_scope not in (WEEKLY_ALLOWANCE_DEFAULT_SCOPE, WEEKLY_ALLOWANCE_OVERRIDE_SCOPE):
+        return
+    week_key = current_week_key(_as_date(str(row["due_date"])))
+    child_id = int(row["child_id"])
+    status = _get_weekly_allowance_progress_conn(conn, child_id, week_key)
+    if status["credited"] or status["total_planned"] <= 0 or status["approved_count"] < status["total_planned"]:
+        return
+    amount = round(float(status["allowance_amount"]), 2)
+    if amount <= 0:
+        return
+    cursor = conn.execute(
+        """
+        INSERT INTO ledger_entries (
+            child_id,
+            asset_type,
+            amount,
+            source_type,
+            note
+        )
+        VALUES (?, 'allowance', ?, 'manual_adjustment', ?)
+        """,
+        (child_id, amount, f"Weekly allowance credit for {week_key}"),
+    )
+    conn.execute(
+        """
+        INSERT INTO weekly_allowance_credits (child_id, week_key, allowance_amount, ledger_entry_id)
+        VALUES (?, ?, ?, ?)
+        """,
+        (child_id, week_key, amount, int(cursor.lastrowid)),
+    )
+
+
 def review_task_completion(
     completion_id: int,
     decision: str,
@@ -3402,28 +3458,40 @@ def review_task_completion(
             return False
 
         if decision == "approved":
-            conn.execute(
+            schedule_row = conn.execute(
                 """
-                INSERT INTO ledger_entries (
-                    child_id,
-                    asset_type,
-                    amount,
-                    source_type,
-                    task_completion_id,
-                    note
-                )
-                SELECT
-                    child_id,
-                    payout_type,
-                    payout_value,
-                    'task_completion',
-                    id,
-                    ?
-                FROM task_completions
-                WHERE id = ?
+                SELECT ts.plan_scope
+                FROM task_completions tc
+                LEFT JOIN task_instances ti ON ti.id = tc.task_instance_id
+                LEFT JOIN task_schedules ts ON ts.id = ti.schedule_id
+                WHERE tc.id = ?
                 """,
-                ("Earned from approved task completion", completion_id),
-            )
+                (completion_id,),
+            ).fetchone()
+            plan_scope = str(schedule_row["plan_scope"] or "standard") if schedule_row else "standard"
+            if plan_scope not in (WEEKLY_ALLOWANCE_DEFAULT_SCOPE, WEEKLY_ALLOWANCE_OVERRIDE_SCOPE):
+                conn.execute(
+                    """
+                    INSERT INTO ledger_entries (
+                        child_id,
+                        asset_type,
+                        amount,
+                        source_type,
+                        task_completion_id,
+                        note
+                    )
+                    SELECT
+                        child_id,
+                        payout_type,
+                        payout_value,
+                        'task_completion',
+                        id,
+                        ?
+                    FROM task_completions
+                    WHERE id = ?
+                    """,
+                    ("Earned from approved task completion", completion_id),
+                )
             conn.execute(
                 """
                 UPDATE task_instances
@@ -3432,6 +3500,7 @@ def review_task_completion(
                 """,
                 (completion_id,),
             )
+            _award_weekly_allowance_if_earned_conn(conn, completion_id)
         elif decision == "rejected":
             conn.execute(
                 """
@@ -3491,18 +3560,41 @@ def add_task_schedule(
     child_id: int | None = None,
     day_of_week: int | None = None,
     due_time: str | None = None,
+    plan_scope: str = "standard",
+    week_key: str | None = None,
 ) -> int:
+    scope = (plan_scope or "standard").strip()
+    if scope not in ("standard", WEEKLY_ALLOWANCE_DEFAULT_SCOPE, WEEKLY_ALLOWANCE_OVERRIDE_SCOPE):
+        raise ValueError("Invalid schedule scope")
     if cadence == "weekly" and day_of_week is None:
         raise ValueError("Weekly schedules require day_of_week (0=Mon..6=Sun)")
     if cadence == "daily":
         day_of_week = None
+    if due_time:
+        due_time = _as_hhmm(due_time)
+    normalized_week_key = None
+    if scope == WEEKLY_ALLOWANCE_DEFAULT_SCOPE:
+        if child_id is None:
+            raise ValueError("Weekly allowance default schedules require child_id")
+        if cadence != "weekly":
+            raise ValueError("Weekly allowance default schedules must use weekly cadence")
+    elif scope == WEEKLY_ALLOWANCE_OVERRIDE_SCOPE:
+        if child_id is None:
+            raise ValueError("Weekly allowance override schedules require child_id")
+        if cadence != "weekly":
+            raise ValueError("Weekly allowance override schedules must use weekly cadence")
+        if not week_key:
+            raise ValueError("Weekly allowance override schedules require week_key")
+        normalized_week_key = _normalize_week_key(week_key)
+    elif week_key:
+        normalized_week_key = _normalize_week_key(week_key)
     with get_connection() as conn:
         cursor = conn.execute(
             """
-            INSERT INTO task_schedules (task_id, child_id, cadence, day_of_week, due_time)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO task_schedules (task_id, child_id, cadence, day_of_week, due_time, plan_scope, week_key)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-            (task_id, child_id, cadence, day_of_week, due_time),
+            (task_id, child_id, cadence, day_of_week, due_time, scope, normalized_week_key),
         )
         return int(cursor.lastrowid)
 
@@ -3518,13 +3610,16 @@ def list_task_schedules(active_only: bool = True) -> Iterable[dict]:
             ts.cadence,
             ts.day_of_week,
             ts.due_time,
+            ts.plan_scope,
+            ts.week_key,
             ts.active
         FROM task_schedules ts
         JOIN tasks t ON t.id = ts.task_id
         LEFT JOIN children c ON c.id = ts.child_id
     """
+    query += " WHERE ts.plan_scope = 'standard'"
     if active_only:
-        query += " WHERE ts.active = 1"
+        query += " AND ts.active = 1"
     query += " ORDER BY ts.id ASC"
     with get_connection() as conn:
         rows = conn.execute(query).fetchall()
@@ -3538,11 +3633,34 @@ def update_task_schedule(
     child_id: int | None = None,
     day_of_week: int | None = None,
     due_time: str | None = None,
+    plan_scope: str = "standard",
+    week_key: str | None = None,
 ) -> bool:
+    scope = (plan_scope or "standard").strip()
+    if scope not in ("standard", WEEKLY_ALLOWANCE_DEFAULT_SCOPE, WEEKLY_ALLOWANCE_OVERRIDE_SCOPE):
+        raise ValueError("Invalid schedule scope")
     if cadence == "weekly" and day_of_week is None:
         raise ValueError("Weekly schedules require day_of_week (0=Mon..6=Sun)")
     if cadence == "daily":
         day_of_week = None
+    if due_time:
+        due_time = _as_hhmm(due_time)
+    normalized_week_key = None
+    if scope == WEEKLY_ALLOWANCE_DEFAULT_SCOPE:
+        if child_id is None:
+            raise ValueError("Weekly allowance default schedules require child_id")
+        if cadence != "weekly":
+            raise ValueError("Weekly allowance default schedules must use weekly cadence")
+    elif scope == WEEKLY_ALLOWANCE_OVERRIDE_SCOPE:
+        if child_id is None:
+            raise ValueError("Weekly allowance override schedules require child_id")
+        if cadence != "weekly":
+            raise ValueError("Weekly allowance override schedules must use weekly cadence")
+        if not week_key:
+            raise ValueError("Weekly allowance override schedules require week_key")
+        normalized_week_key = _normalize_week_key(week_key)
+    elif week_key:
+        normalized_week_key = _normalize_week_key(week_key)
     with get_connection() as conn:
         cursor = conn.execute(
             """
@@ -3551,10 +3669,12 @@ def update_task_schedule(
                 child_id = ?,
                 cadence = ?,
                 day_of_week = ?,
-                due_time = ?
+                due_time = ?,
+                plan_scope = ?,
+                week_key = ?
             WHERE id = ?
             """,
-            (task_id, child_id, cadence, day_of_week, due_time, schedule_id),
+            (task_id, child_id, cadence, day_of_week, due_time, scope, normalized_week_key, schedule_id),
         )
         return cursor.rowcount > 0
 
@@ -3581,6 +3701,336 @@ def delete_task_schedule(schedule_id: int) -> bool:
         return cursor.rowcount > 0
 
 
+def get_weekly_allowance_default_amount(child_id: int) -> float:
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT default_amount FROM weekly_allowance_settings WHERE child_id = ?",
+            (child_id,),
+        ).fetchone()
+        return round(float(row["default_amount"]) if row else 0.0, 2)
+
+
+def set_weekly_allowance_default_amount(child_id: int, amount: float) -> bool:
+    value = round(float(amount), 2)
+    if value < 0:
+        raise ValueError("Weekly allowance amount must be >= 0")
+    with get_connection() as conn:
+        exists = conn.execute("SELECT 1 FROM children WHERE id = ?", (child_id,)).fetchone()
+        if not exists:
+            return False
+        conn.execute(
+            """
+            INSERT INTO weekly_allowance_settings (child_id, default_amount, updated_at)
+            VALUES (?, ?, datetime('now'))
+            ON CONFLICT(child_id) DO UPDATE SET
+                default_amount = excluded.default_amount,
+                updated_at = datetime('now')
+            """,
+            (child_id, value),
+        )
+        return True
+
+
+def get_weekly_allowance_override_amount(child_id: int, week_key: str) -> float | None:
+    normalized_week_key = _normalize_week_key(week_key)
+    with get_connection() as conn:
+        row = conn.execute(
+            """
+            SELECT allowance_amount
+            FROM weekly_allowance_overrides
+            WHERE child_id = ? AND week_key = ?
+            """,
+            (child_id, normalized_week_key),
+        ).fetchone()
+        if not row:
+            return None
+        return round(float(row["allowance_amount"]), 2)
+
+
+def set_weekly_allowance_override_amount(child_id: int, week_key: str, amount: float) -> bool:
+    value = round(float(amount), 2)
+    if value < 0:
+        raise ValueError("Weekly allowance amount must be >= 0")
+    normalized_week_key = _normalize_week_key(week_key)
+    with get_connection() as conn:
+        exists = conn.execute("SELECT 1 FROM children WHERE id = ?", (child_id,)).fetchone()
+        if not exists:
+            return False
+        conn.execute(
+            """
+            INSERT INTO weekly_allowance_overrides (child_id, week_key, allowance_amount)
+            VALUES (?, ?, ?)
+            ON CONFLICT(child_id, week_key) DO UPDATE SET
+                allowance_amount = excluded.allowance_amount
+            """,
+            (child_id, normalized_week_key, value),
+        )
+        return True
+
+
+def add_weekly_allowance_plan_item(
+    child_id: int,
+    task_id: int,
+    day_of_week: int,
+    due_time: str | None = None,
+    week_key: str | None = None,
+) -> int:
+    with get_connection() as conn:
+        task = conn.execute(
+            "SELECT id, rank FROM tasks WHERE id = ? AND active = 1",
+            (task_id,),
+        ).fetchone()
+        if not task:
+            raise ValueError("Task not found or inactive")
+        if str(task["rank"]) != "required":
+            raise ValueError("Weekly allowance plan items must use required tasks")
+    scope = WEEKLY_ALLOWANCE_OVERRIDE_SCOPE if week_key else WEEKLY_ALLOWANCE_DEFAULT_SCOPE
+    return add_task_schedule(
+        task_id=task_id,
+        cadence="weekly",
+        child_id=child_id,
+        day_of_week=day_of_week,
+        due_time=due_time,
+        plan_scope=scope,
+        week_key=week_key,
+    )
+
+
+def delete_weekly_allowance_plan_item(schedule_id: int) -> bool:
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT plan_scope FROM task_schedules WHERE id = ?",
+            (schedule_id,),
+        ).fetchone()
+        if not row:
+            return False
+        if str(row["plan_scope"] or "standard") not in (
+            WEEKLY_ALLOWANCE_DEFAULT_SCOPE,
+            WEEKLY_ALLOWANCE_OVERRIDE_SCOPE,
+        ):
+            raise ValueError("Schedule is not a weekly allowance plan item")
+    return delete_task_schedule(schedule_id)
+
+
+def list_weekly_allowance_plan_items(
+    child_id: int | None = None,
+    week_key: str | None = None,
+    include_inactive: bool = False,
+) -> Iterable[dict]:
+    query = """
+        SELECT
+            ts.id,
+            ts.task_id,
+            t.name AS task_name,
+            ts.child_id,
+            c.name AS child_name,
+            ts.day_of_week,
+            ts.due_time,
+            ts.plan_scope,
+            ts.week_key,
+            ts.active
+        FROM task_schedules ts
+        JOIN tasks t ON t.id = ts.task_id
+        JOIN children c ON c.id = ts.child_id
+        WHERE ts.plan_scope IN (?, ?)
+    """
+    params: list[object] = [WEEKLY_ALLOWANCE_DEFAULT_SCOPE, WEEKLY_ALLOWANCE_OVERRIDE_SCOPE]
+    if child_id is not None:
+        query += " AND ts.child_id = ?"
+        params.append(child_id)
+    if week_key is not None:
+        normalized_week_key = _normalize_week_key(week_key)
+        query += " AND ((ts.plan_scope = ? AND ts.week_key = ?) OR ts.plan_scope = ?)"
+        params.extend([WEEKLY_ALLOWANCE_OVERRIDE_SCOPE, normalized_week_key, WEEKLY_ALLOWANCE_DEFAULT_SCOPE])
+    if not include_inactive:
+        query += " AND ts.active = 1"
+    query += " ORDER BY c.name ASC, ts.plan_scope ASC, COALESCE(ts.week_key, ''), ts.day_of_week ASC, COALESCE(ts.due_time, '') ASC, t.name ASC"
+    with get_connection() as conn:
+        rows = conn.execute(query, tuple(params)).fetchall()
+        return [dict(row) for row in rows]
+
+
+def clone_weekly_allowance_override_from_default(child_id: int, week_key: str) -> int:
+    normalized_week_key = _normalize_week_key(week_key)
+    copied = 0
+    with get_connection() as conn:
+        exists = conn.execute("SELECT 1 FROM children WHERE id = ?", (child_id,)).fetchone()
+        if not exists:
+            raise ValueError("Child not found")
+        default_amount = get_weekly_allowance_default_amount(child_id)
+        conn.execute(
+            """
+            INSERT INTO weekly_allowance_overrides (child_id, week_key, allowance_amount)
+            VALUES (?, ?, ?)
+            ON CONFLICT(child_id, week_key) DO NOTHING
+            """,
+            (child_id, normalized_week_key, default_amount),
+        )
+        default_rows = conn.execute(
+            """
+            SELECT task_id, day_of_week, due_time
+            FROM task_schedules
+            WHERE child_id = ?
+              AND plan_scope = ?
+              AND active = 1
+            ORDER BY day_of_week ASC, COALESCE(due_time, '') ASC, id ASC
+            """,
+            (child_id, WEEKLY_ALLOWANCE_DEFAULT_SCOPE),
+        ).fetchall()
+        existing = {
+            (
+                int(row["task_id"]),
+                int(row["day_of_week"]),
+                str(row["due_time"] or ""),
+            )
+            for row in conn.execute(
+                """
+                SELECT task_id, day_of_week, due_time
+                FROM task_schedules
+                WHERE child_id = ?
+                  AND plan_scope = ?
+                  AND week_key = ?
+                  AND active = 1
+                """,
+                (child_id, WEEKLY_ALLOWANCE_OVERRIDE_SCOPE, normalized_week_key),
+            ).fetchall()
+        }
+        for row in default_rows:
+            signature = (
+                int(row["task_id"]),
+                int(row["day_of_week"]),
+                str(row["due_time"] or ""),
+            )
+            if signature in existing:
+                continue
+            conn.execute(
+                """
+                INSERT INTO task_schedules (task_id, child_id, cadence, day_of_week, due_time, plan_scope, week_key)
+                VALUES (?, ?, 'weekly', ?, ?, ?, ?)
+                """,
+                (
+                    int(row["task_id"]),
+                    child_id,
+                    int(row["day_of_week"]),
+                    row["due_time"],
+                    WEEKLY_ALLOWANCE_OVERRIDE_SCOPE,
+                    normalized_week_key,
+                ),
+            )
+            copied += 1
+            existing.add(signature)
+    return copied
+
+
+def _weekly_allowance_override_exists(conn: sqlite3.Connection, child_id: int, week_key: str) -> bool:
+    row = conn.execute(
+        """
+        SELECT 1
+        FROM task_schedules
+        WHERE child_id = ?
+          AND plan_scope = ?
+          AND week_key = ?
+          AND active = 1
+        LIMIT 1
+        """,
+        (child_id, WEEKLY_ALLOWANCE_OVERRIDE_SCOPE, week_key),
+    ).fetchone()
+    return row is not None
+
+
+def _get_effective_weekly_allowance_amount_conn(conn: sqlite3.Connection, child_id: int, week_key: str) -> float:
+    row = conn.execute(
+        """
+        SELECT allowance_amount
+        FROM weekly_allowance_overrides
+        WHERE child_id = ? AND week_key = ?
+        """,
+        (child_id, week_key),
+    ).fetchone()
+    if row:
+        return round(float(row["allowance_amount"]), 2)
+    row = conn.execute(
+        "SELECT default_amount FROM weekly_allowance_settings WHERE child_id = ?",
+        (child_id,),
+    ).fetchone()
+    return round(float(row["default_amount"]) if row else 0.0, 2)
+
+
+def _get_effective_weekly_allowance_scope_conn(conn: sqlite3.Connection, child_id: int, week_key: str) -> str:
+    if _weekly_allowance_override_exists(conn, child_id, week_key):
+        return WEEKLY_ALLOWANCE_OVERRIDE_SCOPE
+    return WEEKLY_ALLOWANCE_DEFAULT_SCOPE
+
+
+def _get_weekly_allowance_progress_conn(
+    conn: sqlite3.Connection,
+    child_id: int,
+    week_key: str,
+) -> dict:
+    start, end = _week_bounds(week_key)
+    scope = _get_effective_weekly_allowance_scope_conn(conn, child_id, week_key)
+    params: list[object] = [child_id, start.isoformat(), end.isoformat(), scope]
+    week_clause = ""
+    if scope == WEEKLY_ALLOWANCE_OVERRIDE_SCOPE:
+        week_clause = " AND ts.week_key = ?"
+        params.append(week_key)
+    total_row = conn.execute(
+        f"""
+        SELECT COUNT(1) AS cnt
+        FROM task_instances ti
+        JOIN task_schedules ts ON ts.id = ti.schedule_id
+        WHERE ti.child_id = ?
+          AND date(ti.due_date) BETWEEN date(?) AND date(?)
+          AND ts.plan_scope = ?
+          {week_clause}
+        """,
+        tuple(params),
+    ).fetchone()
+    approved_row = conn.execute(
+        f"""
+        SELECT COUNT(1) AS cnt
+        FROM task_instances ti
+        JOIN task_schedules ts ON ts.id = ti.schedule_id
+        WHERE ti.child_id = ?
+          AND date(ti.due_date) BETWEEN date(?) AND date(?)
+          AND ts.plan_scope = ?
+          {week_clause}
+          AND ti.status = 'approved'
+        """,
+        tuple(params),
+    ).fetchone()
+    credited_row = conn.execute(
+        """
+        SELECT id, ledger_entry_id
+        FROM weekly_allowance_credits
+        WHERE child_id = ? AND week_key = ?
+        """,
+        (child_id, week_key),
+    ).fetchone()
+    total_planned = int(total_row["cnt"]) if total_row else 0
+    approved_count = int(approved_row["cnt"]) if approved_row else 0
+    return {
+        "week_key": week_key,
+        "plan_source": "override" if scope == WEEKLY_ALLOWANCE_OVERRIDE_SCOPE else "default",
+        "total_planned": total_planned,
+        "approved_count": approved_count,
+        "allowance_amount": _get_effective_weekly_allowance_amount_conn(conn, child_id, week_key),
+        "credited": credited_row is not None,
+        "credit_id": int(credited_row["id"]) if credited_row else None,
+        "credit_ledger_entry_id": int(credited_row["ledger_entry_id"]) if credited_row and credited_row["ledger_entry_id"] else None,
+    }
+
+
+def get_weekly_allowance_status(child_id: int, week_key: str | None = None) -> dict:
+    normalized_week_key = current_week_key() if week_key is None else _normalize_week_key(week_key)
+    with get_connection() as conn:
+        status = _get_weekly_allowance_progress_conn(conn, child_id, normalized_week_key)
+        status["default_amount"] = get_weekly_allowance_default_amount(child_id)
+        override_amount = get_weekly_allowance_override_amount(child_id, normalized_week_key)
+        status["override_amount"] = override_amount
+        return status
+
+
 def generate_task_instances(start_on: str | date, end_on: str | date) -> int:
     start_date = _as_date(start_on)
     end_date = _as_date(end_on)
@@ -3591,24 +4041,41 @@ def generate_task_instances(start_on: str | date, end_on: str | date) -> int:
     with get_connection() as conn:
         schedules = conn.execute(
             """
-            SELECT id, task_id, child_id, cadence, day_of_week, due_time
+            SELECT id, task_id, child_id, cadence, day_of_week, due_time, plan_scope, week_key
             FROM task_schedules
             WHERE active = 1
             """
         ).fetchall()
         active_children = conn.execute("SELECT id FROM children WHERE active = 1").fetchall()
         child_ids = [int(row["id"]) for row in active_children]
+        override_weeks = {
+            (int(schedule["child_id"]), str(schedule["week_key"]))
+            for schedule in schedules
+            if str(schedule["plan_scope"] or "standard") == WEEKLY_ALLOWANCE_OVERRIDE_SCOPE
+            and schedule["child_id"] is not None
+            and schedule["week_key"]
+        }
 
         current = start_date
         while current <= end_date:
             weekday = current.weekday()
             due_date = current.isoformat()
+            week_key = current_week_key(current)
             for schedule in schedules:
                 cadence = str(schedule["cadence"])
                 if cadence == "weekly" and int(schedule["day_of_week"]) != weekday:
                     continue
                 if cadence not in ("daily", "weekly"):
                     continue
+                plan_scope = str(schedule["plan_scope"] or "standard")
+                if plan_scope == WEEKLY_ALLOWANCE_OVERRIDE_SCOPE:
+                    if str(schedule["week_key"] or "") != week_key:
+                        continue
+                elif plan_scope == WEEKLY_ALLOWANCE_DEFAULT_SCOPE:
+                    if schedule["child_id"] is None:
+                        continue
+                    if (int(schedule["child_id"]), week_key) in override_weeks:
+                        continue
                 targets = [int(schedule["child_id"])] if schedule["child_id"] is not None else child_ids
                 for cid in targets:
                     cursor = conn.execute(

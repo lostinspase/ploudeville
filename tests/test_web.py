@@ -44,6 +44,7 @@ from src.family_system.repository import (
     create_child_pin_reset_token,
     consume_child_pin_reset_token,
     add_child_activity,
+    add_weekly_allowance_plan_item,
     list_pending_activity_notifications,
     mark_activity_notification_sent,
     update_activity_notification_settings,
@@ -56,22 +57,28 @@ from src.family_system.repository import (
     set_task_schedule_active,
     set_child_pin,
     set_after_school_reminders,
+    set_weekly_allowance_default_amount,
+    set_weekly_allowance_override_amount,
     get_message_of_the_day,
     get_fun_fact_of_the_day,
     get_screen_time_allotment_minutes,
+    get_weekly_allowance_status,
     list_child_app_limits,
     add_concert_goal,
     add_adventure_goal,
     list_child_concert_goal_progress,
     list_child_adventure_goal_progress,
     list_ios_usage_reports,
+    clone_weekly_allowance_override_from_default,
     update_child_contact_info,
     verify_child_pin,
     set_message_of_the_day,
     set_fun_fact_of_the_day,
     submit_service_hours,
+    submit_task_instance,
     total_completed_service_hours,
     weekly_required_completed_count,
+    list_weekly_allowance_plan_items,
     update_task_schedule,
 )
 
@@ -225,6 +232,118 @@ def test_parent_filter_hides_inactive_schedules(tmp_path) -> None:
     assert status.startswith("200")
     html = content.decode("utf-8")
     assert f'name="schedule_id" value="{schedule_id}"' not in html
+
+
+def test_default_weekly_allowance_plan_credits_once_after_all_approvals(tmp_path) -> None:
+    db.DATA_DIR = tmp_path
+    db.DB_PATH = tmp_path / "test_family.db"
+    db.init_db()
+
+    child_id = add_or_update_child("Elliana", 10)
+    dish_id = add_task("Unload dishwasher weekly", "required", "allowance", 3)
+    trash_id = add_task("Take trash out weekly", "required", "allowance", 4)
+
+    assert set_weekly_allowance_default_amount(child_id, 12.5)
+    add_weekly_allowance_plan_item(child_id=child_id, task_id=dish_id, day_of_week=0, due_time="08:00")
+    add_weekly_allowance_plan_item(child_id=child_id, task_id=trash_id, day_of_week=2, due_time="08:00")
+
+    created = generate_task_instances("2026-02-16", "2026-02-22")
+    due = list_due_task_instances(child_id=child_id)
+    assert created >= 2
+    assert len(due) == 2
+
+    first_completion = submit_task_instance(int(due[0]["id"]), "done")
+    assert review_task_completion(first_completion, "approved", "Mom")
+    balances_after_first = list_balances()
+    assert not any(
+        int(row["child_id"]) == child_id and str(row["asset_type"]) == "allowance"
+        for row in balances_after_first
+    )
+
+    second_completion = submit_task_instance(int(due[1]["id"]), "done")
+    assert review_task_completion(second_completion, "approved", "Mom")
+    balances_after_second = list_balances()
+    second_allowance = next(float(row["balance"]) for row in balances_after_second if row["asset_type"] == "allowance")
+    assert second_allowance == 12.5
+
+    status = get_weekly_allowance_status(child_id, "2026-W08")
+    assert status["approved_count"] == 2
+    assert status["total_planned"] == 2
+    assert status["credited"] is True
+    assert status["allowance_amount"] == 12.5
+
+
+def test_current_week_override_shadows_default_weekly_allowance_plan(tmp_path) -> None:
+    db.DATA_DIR = tmp_path
+    db.DB_PATH = tmp_path / "test_family.db"
+    db.init_db()
+
+    child_id = add_or_update_child("Gracelyn", 7)
+    default_task_id = add_task("Default room reset", "required", "allowance", 2)
+    override_task_id = add_task("Override laundry fold", "required", "allowance", 2)
+
+    assert set_weekly_allowance_default_amount(child_id, 10.0)
+    add_weekly_allowance_plan_item(child_id=child_id, task_id=default_task_id, day_of_week=0, due_time="09:00")
+    add_weekly_allowance_plan_item(child_id=child_id, task_id=default_task_id, day_of_week=2, due_time="09:00")
+
+    copied = clone_weekly_allowance_override_from_default(child_id, "2026-W08")
+    assert copied == 2
+    assert set_weekly_allowance_override_amount(child_id, "2026-W08", 7.0)
+    add_weekly_allowance_plan_item(
+        child_id=child_id,
+        task_id=override_task_id,
+        day_of_week=4,
+        due_time="10:00",
+        week_key="2026-W08",
+    )
+
+    plan_items = list_weekly_allowance_plan_items(child_id=child_id, include_inactive=False)
+    override_items = [
+        row for row in plan_items if str(row["plan_scope"]) == "weekly_allowance_override" and str(row["week_key"]) == "2026-W08"
+    ]
+    assert len(override_items) == 3
+
+    created = generate_task_instances("2026-02-16", "2026-02-22")
+    due = list_due_task_instances(child_id=child_id)
+    task_names = {str(row["task_name"]) for row in due}
+    assert created >= 3
+    assert "Override laundry fold" in task_names
+    assert len(due) == 3
+
+    for item in due:
+        completion_id = submit_task_instance(int(item["id"]), "done")
+        assert review_task_completion(completion_id, "approved", "Dad")
+
+    balances = list_balances()
+    allowance = next(float(row["balance"]) for row in balances if row["asset_type"] == "allowance")
+    assert allowance == 7.0
+
+    status = get_weekly_allowance_status(child_id, "2026-W08")
+    assert status["plan_source"] == "override"
+    assert status["allowance_amount"] == 7.0
+    assert status["approved_count"] == 3
+    assert status["credited"] is True
+
+
+def test_parent_page_shows_weekly_allowance_section(tmp_path) -> None:
+    db.DATA_DIR = tmp_path
+    db.DB_PATH = tmp_path / "test_family.db"
+    db.init_db()
+
+    child_id = add_or_update_child("Rosie", 3)
+    task_id = add_task("Toy pickup weekly", "required", "allowance", 1)
+    set_weekly_allowance_default_amount(child_id, 5.0)
+    add_weekly_allowance_plan_item(child_id=child_id, task_id=task_id, day_of_week=5, due_time="12:00")
+
+    parent_cookie = f"{web.PARENT_COOKIE_NAME}={web._sign_parent()}"
+    status, content = _invoke_app("/parent", cookie=parent_cookie)
+
+    assert status.startswith("200")
+    html = content.decode("utf-8")
+    assert "Weekly Allowance Plans" in html
+    assert "Default Week" in html
+    assert "Current Week Override" in html
+    assert "Toy pickup weekly" in html
 
 
 def test_pet_species_contains_unicorn_and_alacorn(tmp_path) -> None:
@@ -1060,7 +1179,7 @@ def test_parent_can_override_failed_reading_quiz_and_award_credit(tmp_path) -> N
     assert "Overridden: 1" in parent_html
 
 
-def test_parent_page_shows_panel_view_selector(tmp_path) -> None:
+def test_parent_page_shows_tab_navigation(tmp_path) -> None:
     db.DATA_DIR = tmp_path
     db.DB_PATH = tmp_path / "test_family.db"
     db.init_db()
@@ -1068,8 +1187,9 @@ def test_parent_page_shows_panel_view_selector(tmp_path) -> None:
     status, content = _invoke_app("/parent", cookie=f"{web.PARENT_COOKIE_NAME}={web._sign_parent()}")
     assert status.startswith("200")
     html = content.decode("utf-8")
-    assert "Panel View" in html
-    assert "parent-view-select" in html
+    assert "Daily Ops" in html
+    assert "Allowance &amp; Money" in html
+    assert "parent-tabbar" in html
 
 
 def test_ios_usage_sync_endpoint_persists_report(tmp_path) -> None:
