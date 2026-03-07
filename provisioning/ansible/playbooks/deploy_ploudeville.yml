@@ -1,4 +1,13 @@
 ---
+- name: Configure local DNS on the Raspberry Pi
+  hosts: dnsservers
+  become: true
+  vars_files:
+    - ../group_vars/all.yml
+    - ../group_vars/vault.yml
+  roles:
+    - role: bind_local_dns
+
 - name: Deploy Ploudeville app server
   hosts: webservers
   become: true

@@ -13,13 +13,40 @@ app_db_seed_local_path: ""
 app_bind_host: 127.0.0.1
 app_port: 18000
 
-# DNS host served by Nginx. For LAN-only access you can use the host IP.
-public_domain: 10.0.100.167
+# DNS hostnames served by Nginx.
+public_domain: www.ploudeville.com
+public_domain_aliases:
+  - ploudeville.com
+  - "*.ploudeville.com"
 
 # Systemd and reverse proxy settings.
 systemd_unit_name: "{{ app_name }}.service"
 nginx_site_name: "{{ app_name }}.conf"
 nginx_enable_default_site: false
+
+# Local network DNS served by bind9 on the Raspberry Pi.
+dns_bind_service_name: named
+dns_server_ipv4: "{{ ansible_host }}"
+dns_zone_name: ploudeville.com
+dns_zone_ttl: 300
+dns_allow_query:
+  - localhost
+  - localnets
+dns_allow_recursion:
+  - localhost
+  - localnets
+dns_listen_ipv4:
+  - 127.0.0.1
+  - "{{ dns_server_ipv4 }}"
+dns_forwarders:
+  - 1.1.1.1
+  - 1.0.0.1
+dns_zone_apex_records:
+  - "{{ dns_server_ipv4 }}"
+dns_zone_www_records:
+  - "{{ dns_server_ipv4 }}"
+dns_zone_wildcard_records:
+  - "{{ dns_server_ipv4 }}"
 
 # Mandatory app secret used for cookie signing.
 family_web_secret: "{{ vault_family_web_secret }}"

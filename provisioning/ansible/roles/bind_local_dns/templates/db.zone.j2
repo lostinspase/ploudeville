@@ -1,0 +1,20 @@
+$TTL {{ dns_zone_ttl }}
+@   IN  SOA ns1.{{ dns_zone_name }}. admin.{{ dns_zone_name }}. (
+        {{ ansible_date_time.epoch }}
+        {{ dns_zone_ttl }}
+        {{ dns_zone_ttl }}
+        1209600
+        {{ dns_zone_ttl }}
+)
+    IN  NS  ns1.{{ dns_zone_name }}.
+
+ns1 IN  A   {{ dns_server_ipv4 }}
+{% for record in dns_zone_apex_records %}
+@   IN  A   {{ record }}
+{% endfor %}
+{% for record in dns_zone_www_records %}
+www IN  A   {{ record }}
+{% endfor %}
+{% for record in dns_zone_wildcard_records | default([]) %}
+*   IN  A   {{ record }}
+{% endfor %}

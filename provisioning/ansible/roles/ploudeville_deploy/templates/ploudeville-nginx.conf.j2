@@ -1,7 +1,7 @@
 server {
     listen 80;
     listen [::]:80;
-    server_name {{ public_domain }};
+    server_name {{ ([public_domain] + (public_domain_aliases | default([]))) | join(' ') }};
 
     location / {
         proxy_pass http://{{ app_bind_host }}:{{ app_port }};

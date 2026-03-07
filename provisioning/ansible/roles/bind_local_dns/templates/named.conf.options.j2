@@ -1,0 +1,21 @@
+options {
+    directory "/var/cache/bind";
+
+    recursion yes;
+    allow-query { {{ dns_allow_query | join("; ") }}; };
+    allow-recursion { {{ dns_allow_recursion | join("; ") }}; };
+    allow-transfer { none; };
+
+    listen-on port 53 { {{ dns_listen_ipv4 | join("; ") }}; };
+    listen-on-v6 { none; };
+
+    forwarders {
+{% for forwarder in dns_forwarders %}
+        {{ forwarder }};
+{% endfor %}
+    };
+
+    dnssec-validation auto;
+    auth-nxdomain no;
+    empty-zones-enable no;
+};

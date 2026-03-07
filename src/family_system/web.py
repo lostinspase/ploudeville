@@ -633,17 +633,22 @@ def _base_styles() -> str:
       padding: 12px; box-shadow: 0 3px 9px rgba(33, 42, 40, 0.05);
     }
     table { width: 100%; border-collapse: collapse; background: #fffdf7; border: 1px solid #eadaae; border-radius: 12px; overflow: hidden; }
-    th, td { text-align: left; padding: 8px; border-bottom: 1px solid #efe4c7; font-size: 14px; }
+    th, td { text-align: left; padding: 8px; border-bottom: 1px solid #efe4c7; font-size: 14px; vertical-align: top; }
     th { background: #fff3d4; font-size: 13px; }
     tr:last-child td { border-bottom: none; }
-    form { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    form { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 0; }
+    .stack { display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
+    .stack > * { margin: 0; }
+    .card > form + form,
+    td > form + form,
+    form + form { margin-top: 10px; }
     input, select, button {
       font: inherit; padding: 8px 10px; border: 1px solid #d9c899; border-radius: 10px;
-      background: #fffef9; min-height: 34px;
+      background: #fffef9; min-height: 34px; max-width: 100%;
     }
     button {
       border: none; background: linear-gradient(120deg, var(--brand), #1f8a7b);
-      color: #fff; font-weight: 800; cursor: pointer;
+      color: #fff; font-weight: 800; cursor: pointer; white-space: nowrap;
     }
     .truncate {
       white-space: normal;
@@ -1776,29 +1781,31 @@ def _parent_page(
           </select>
         </div>
         <div class="card">
-          <form method="get" action="/parent">
-            <label>
-              <input type="checkbox" name="show_inactive" value="1" {"checked" if include_inactive else ""} />
-              Show inactive schedules
-            </label>
-            <button type="submit">Apply</button>
-          </form>
-          <form method="get" action="/export-data-json"><button type="submit">Export Data JSON</button></form>
-          <form method="get" action="/export-ledger-csv"><button type="submit">Export Ledger CSV</button></form>
-          <form method="get" action="/export-interest-csv">
-            <input type="hidden" name="interest_child_id" value="{escape(interest_child_id)}" />
-            <input type="hidden" name="interest_date_from" value="{escape(interest_from_value)}" />
-            <input type="hidden" name="interest_date_to" value="{escape(interest_to_value)}" />
-            <input type="hidden" name="interest_preset" value="{escape(preset)}" />
-            <button type="submit">Export Interest CSV</button>
-          </form>
-          <form method="get" action="/export-reading-csv">
-            <input type="hidden" name="reading_child_id" value="{escape(reading_child_id)}" />
-            <input type="hidden" name="reading_status" value="{escape(reading_status_value)}" />
-            <input type="hidden" name="reading_date_from" value="{escape(reading_date_from_value)}" />
-            <input type="hidden" name="reading_date_to" value="{escape(reading_date_to_value)}" />
-            <button type="submit">Export Reading CSV</button>
-          </form>
+          <div class="stack">
+            <form method="get" action="/parent">
+              <label>
+                <input type="checkbox" name="show_inactive" value="1" {"checked" if include_inactive else ""} />
+                Show inactive schedules
+              </label>
+              <button type="submit">Apply</button>
+            </form>
+            <form method="get" action="/export-data-json"><button type="submit">Export Data JSON</button></form>
+            <form method="get" action="/export-ledger-csv"><button type="submit">Export Ledger CSV</button></form>
+            <form method="get" action="/export-interest-csv">
+              <input type="hidden" name="interest_child_id" value="{escape(interest_child_id)}" />
+              <input type="hidden" name="interest_date_from" value="{escape(interest_from_value)}" />
+              <input type="hidden" name="interest_date_to" value="{escape(interest_to_value)}" />
+              <input type="hidden" name="interest_preset" value="{escape(preset)}" />
+              <button type="submit">Export Interest CSV</button>
+            </form>
+            <form method="get" action="/export-reading-csv">
+              <input type="hidden" name="reading_child_id" value="{escape(reading_child_id)}" />
+              <input type="hidden" name="reading_status" value="{escape(reading_status_value)}" />
+              <input type="hidden" name="reading_date_from" value="{escape(reading_date_from_value)}" />
+              <input type="hidden" name="reading_date_to" value="{escape(reading_date_to_value)}" />
+              <button type="submit">Export Reading CSV</button>
+            </form>
+          </div>
         </div>
         <div class="card">
           <h3>Pending Reviews</h3>
@@ -2004,7 +2011,7 @@ def _parent_page(
             <thead><tr><th>Child</th><th>Email</th><th>Text Number</th><th>Actions</th></tr></thead>
             <tbody>
               {''.join(
-                f"<tr><td>{escape(str(c['name']))}</td><td>{escape(str(c.get('email') or '-'))}</td><td>{escape(str(c.get('text_number') or '-'))}</td><td>"
+                f"<tr><td>{escape(str(c['name']))}</td><td>{escape(str(c.get('email') or '-'))}</td><td>{escape(str(c.get('text_number') or '-'))}</td><td><div class='stack'>"
                 f"<form method='post' action='/update-child-contact'>"
                 f"<input type='hidden' name='child_id' value='{c['id']}' />"
                 f"<input name='email' value='{escape(str(c.get('email') or ''))}' placeholder='child@email.com' />"
@@ -2013,7 +2020,7 @@ def _parent_page(
                 f"<form method='post' action='/child-request-pin-reset'>"
                 f"<input type='hidden' name='child_id' value='{c['id']}' />"
                 f"<button type='submit'>Email PIN Reset Link</button></form>"
-                f"</td></tr>"
+                f"</div></td></tr>"
                 for c in children
               )}
             </tbody>
