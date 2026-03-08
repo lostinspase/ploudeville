@@ -654,6 +654,41 @@ def _base_styles() -> str:
       box-shadow: 0 5px 14px rgba(18, 110, 97, 0.22);
     }
     .parent-panel-column { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+    .planner-form {
+      display: flex;
+      flex-direction: column;
+      align-items: stretch;
+      gap: 10px;
+      padding: 10px;
+      background: #fffaf0;
+      border: 1px solid #ead9b4;
+      border-radius: 12px;
+    }
+    .planner-row {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+      gap: 10px;
+      align-items: start;
+    }
+    .planner-field {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      min-width: 0;
+    }
+    .planner-field label {
+      font-size: 12px;
+      font-weight: 800;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .planner-field small {
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.35;
+    }
+    .planner-form button { align-self: flex-start; }
     .card {
       background: var(--card); border: 1px solid #e7d9b8; border-radius: var(--radius);
       padding: 12px; box-shadow: 0 3px 9px rgba(33, 42, 40, 0.05);
@@ -1500,6 +1535,10 @@ def _parent_page(
         for s in schedules
     )
     weekday_labels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+    weekday_option_tags = "".join(
+        f'<option value="{index}">{label}</option>'
+        for index, label in enumerate(["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"])
+    )
     weekly_default_rows = "".join(
         f"""
         <tr>
@@ -1934,18 +1973,39 @@ def _parent_page(
                 <input type="number" min="0" step="0.01" name="amount" placeholder="Weekly amount" required />
                 <button type="submit">Save Default Amount</button>
               </form>
-              <form method="post" action="/add-weekly-allowance-item">
+              <form method="post" action="/add-weekly-allowance-item" class="planner-form">
                 <input type="hidden" name="scope" value="default" />
-                <select name="child_id" required>
-                  <option value="">Child</option>
-                  {''.join(f'<option value="{c["id"]}">{escape(str(c["name"]))}</option>' for c in children)}
-                </select>
-                <select name="task_id" required>
-                  <option value="">Required task</option>
-                  {''.join(f'<option value="{t["id"]}">{escape(str(t["name"]))}</option>' for t in tasks if str(t.get("rank")) == "required")}
-                </select>
-                <input type="number" name="day_of_week" min="0" max="6" placeholder="weekday 0-6" required />
-                <input name="due_time" placeholder="HH:MM" />
+                <div class="planner-row">
+                  <div class="planner-field">
+                    <label for="default-chore-child">Child</label>
+                    <select id="default-chore-child" name="child_id" required>
+                      <option value="">Choose child</option>
+                      {''.join(f'<option value="{c["id"]}">{escape(str(c["name"]))}</option>' for c in children)}
+                    </select>
+                  </div>
+                  <div class="planner-field">
+                    <label for="default-chore-task">Required Chore</label>
+                    <select id="default-chore-task" name="task_id" required>
+                      <option value="">Choose required task</option>
+                      {''.join(f'<option value="{t["id"]}">{escape(str(t["name"]))}</option>' for t in tasks if str(t.get("rank")) == "required")}
+                    </select>
+                  </div>
+                </div>
+                <div class="planner-row">
+                  <div class="planner-field">
+                    <label for="default-chore-day">Day Of Week</label>
+                    <select id="default-chore-day" name="day_of_week" required>
+                      <option value="">Choose day</option>
+                      {weekday_option_tags}
+                    </select>
+                    <small>Pick when this weekly chore should show up for the child.</small>
+                  </div>
+                  <div class="planner-field">
+                    <label for="default-chore-time">Due Time</label>
+                    <input id="default-chore-time" name="due_time" placeholder="HH:MM" />
+                    <small>Optional. Leave blank if the chore just needs to be done sometime that day.</small>
+                  </div>
+                </div>
                 <button type="submit">Add Default Chore</button>
               </form>
               <table><thead><tr><th>Child</th><th>Amount</th><th>Task</th><th>Weekday</th><th>Due</th><th>Action</th></tr></thead>
@@ -1970,19 +2030,44 @@ def _parent_page(
                 <input type="number" min="0" step="0.01" name="amount" placeholder="Override amount" required />
                 <button type="submit">Save Override Amount</button>
               </form>
-              <form method="post" action="/add-weekly-allowance-item">
+              <form method="post" action="/add-weekly-allowance-item" class="planner-form">
                 <input type="hidden" name="scope" value="override" />
-                <select name="child_id" required>
-                  <option value="">Child</option>
-                  {''.join(f'<option value="{c["id"]}">{escape(str(c["name"]))}</option>' for c in children)}
-                </select>
-                <input name="week_key" value="{current_week}" required />
-                <select name="task_id" required>
-                  <option value="">Required task</option>
-                  {''.join(f'<option value="{t["id"]}">{escape(str(t["name"]))}</option>' for t in tasks if str(t.get("rank")) == "required")}
-                </select>
-                <input type="number" name="day_of_week" min="0" max="6" placeholder="weekday 0-6" required />
-                <input name="due_time" placeholder="HH:MM" />
+                <div class="planner-row">
+                  <div class="planner-field">
+                    <label for="override-chore-child">Child</label>
+                    <select id="override-chore-child" name="child_id" required>
+                      <option value="">Choose child</option>
+                      {''.join(f'<option value="{c["id"]}">{escape(str(c["name"]))}</option>' for c in children)}
+                    </select>
+                  </div>
+                  <div class="planner-field">
+                    <label for="override-chore-week">Week Key</label>
+                    <input id="override-chore-week" name="week_key" value="{current_week}" required />
+                    <small>ISO week format, like {current_week}.</small>
+                  </div>
+                </div>
+                <div class="planner-row">
+                  <div class="planner-field">
+                    <label for="override-chore-task">Override Chore</label>
+                    <select id="override-chore-task" name="task_id" required>
+                      <option value="">Choose required task</option>
+                      {''.join(f'<option value="{t["id"]}">{escape(str(t["name"]))}</option>' for t in tasks if str(t.get("rank")) == "required")}
+                    </select>
+                  </div>
+                  <div class="planner-field">
+                    <label for="override-chore-day">Day Of Week</label>
+                    <select id="override-chore-day" name="day_of_week" required>
+                      <option value="">Choose day</option>
+                      {weekday_option_tags}
+                    </select>
+                    <small>Pick the day this override chore belongs to in the selected week.</small>
+                  </div>
+                  <div class="planner-field">
+                    <label for="override-chore-time">Due Time</label>
+                    <input id="override-chore-time" name="due_time" placeholder="HH:MM" />
+                    <small>Optional.</small>
+                  </div>
+                </div>
                 <button type="submit">Add Override Chore</button>
               </form>
               <table><thead><tr><th>Child</th><th>Week</th><th>Amount</th><th>Task</th><th>Weekday</th><th>Due</th><th>Action</th></tr></thead>
