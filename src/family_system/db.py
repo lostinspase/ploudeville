@@ -228,6 +228,8 @@ def init_db() -> None:
                 child_id INTEGER REFERENCES children(id),
                 cadence TEXT NOT NULL CHECK(cadence IN ('daily', 'weekly')),
                 day_of_week INTEGER CHECK(day_of_week BETWEEN 0 AND 6),
+                period_mode TEXT NOT NULL DEFAULT 'day_of_week' CHECK(period_mode IN ('day_of_week', 'all_days', 'times_per_period')),
+                times_per_period INTEGER NOT NULL DEFAULT 1 CHECK(times_per_period BETWEEN 1 AND 7),
                 due_time TEXT,
                 plan_scope TEXT NOT NULL DEFAULT 'standard' CHECK(plan_scope IN ('standard', 'weekly_allowance_default', 'weekly_allowance_override')),
                 week_key TEXT,
@@ -668,6 +670,10 @@ def init_db() -> None:
             conn.execute("ALTER TABLE task_schedules ADD COLUMN plan_scope TEXT NOT NULL DEFAULT 'standard'")
         if not _column_exists(conn, "task_schedules", "week_key"):
             conn.execute("ALTER TABLE task_schedules ADD COLUMN week_key TEXT")
+        if not _column_exists(conn, "task_schedules", "period_mode"):
+            conn.execute("ALTER TABLE task_schedules ADD COLUMN period_mode TEXT NOT NULL DEFAULT 'day_of_week'")
+        if not _column_exists(conn, "task_schedules", "times_per_period"):
+            conn.execute("ALTER TABLE task_schedules ADD COLUMN times_per_period INTEGER NOT NULL DEFAULT 1")
         if not _column_exists(conn, "pet_species", "is_custom"):
             conn.execute("ALTER TABLE pet_species ADD COLUMN is_custom INTEGER NOT NULL DEFAULT 0")
         if not _column_exists(conn, "pet_species", "created_by_child_id"):

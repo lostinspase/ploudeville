@@ -274,6 +274,66 @@ def test_default_weekly_allowance_plan_credits_once_after_all_approvals(tmp_path
     assert status["allowance_amount"] == 12.5
 
 
+def test_weekly_allowance_all_days_rule_generates_daily_instances(tmp_path) -> None:
+    db.DATA_DIR = tmp_path
+    db.DB_PATH = tmp_path / "test_family.db"
+    db.init_db()
+
+    child_id = add_or_update_child("Gracelyn", 7)
+    task_id = add_task("Read 20 minutes", "required", "allowance", 0)
+
+    assert set_weekly_allowance_default_amount(child_id, 9.0)
+    add_weekly_allowance_plan_item(
+        child_id=child_id,
+        task_id=task_id,
+        period_mode="all_days",
+        due_time="18:00",
+    )
+
+    created = generate_task_instances("2026-02-16", "2026-02-22")
+    due = list_due_task_instances(child_id=child_id)
+    status = get_weekly_allowance_status(child_id, "2026-W08")
+
+    assert created >= 7
+    assert len(due) == 7
+    assert status["total_planned"] == 7
+
+
+def test_weekly_allowance_times_in_period_rule_credits_after_target_count(tmp_path) -> None:
+    db.DATA_DIR = tmp_path
+    db.DB_PATH = tmp_path / "test_family.db"
+    db.init_db()
+
+    child_id = add_or_update_child("Gracelyn", 7)
+    task_id = add_task("Unload dishwasher", "required", "allowance", 0)
+
+    assert set_weekly_allowance_default_amount(child_id, 6.0)
+    add_weekly_allowance_plan_item(
+        child_id=child_id,
+        task_id=task_id,
+        period_mode="times_per_period",
+        times_per_period=2,
+    )
+
+    created = generate_task_instances("2026-02-16", "2026-02-22")
+    due = list_due_task_instances(child_id=child_id)
+    assert created >= 2
+    assert len(due) == 2
+
+    first_completion = submit_task_instance(int(due[0]["id"]), "done")
+    assert review_task_completion(first_completion, "approved", "Mom")
+    first_status = get_weekly_allowance_status(child_id, "2026-W08")
+    assert first_status["approved_count"] == 1
+    assert first_status["credited"] is False
+
+    second_completion = submit_task_instance(int(due[1]["id"]), "done")
+    assert review_task_completion(second_completion, "approved", "Mom")
+    second_status = get_weekly_allowance_status(child_id, "2026-W08")
+    assert second_status["approved_count"] == 2
+    assert second_status["total_planned"] == 2
+    assert second_status["credited"] is True
+
+
 def test_current_week_override_shadows_default_weekly_allowance_plan(tmp_path) -> None:
     db.DATA_DIR = tmp_path
     db.DB_PATH = tmp_path / "test_family.db"
@@ -345,6 +405,9 @@ def test_parent_page_shows_weekly_allowance_section(tmp_path) -> None:
     assert "Default Week" in html
     assert "Current Week Override" in html
     assert "Toy pickup weekly" in html
+    assert "All Days" in html
+    assert "Any Day In Period" in html
+    assert "Times In Period" in html
 
 
 def test_pet_species_contains_unicorn_and_alacorn(tmp_path) -> None:

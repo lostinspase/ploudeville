@@ -1542,17 +1542,31 @@ def _parent_page(
         for s in schedules
     )
     weekday_labels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+    weekday_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
     weekday_option_tags = "".join(
         f'<option value="{index}">{label}</option>'
-        for index, label in enumerate(["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"])
+        for index, label in enumerate(weekday_names)
     )
+
+    def weekly_plan_rule_label(item: dict) -> str:
+        mode = str(item.get("period_mode") or "day_of_week")
+        if mode == "all_days":
+            return "All Days"
+        if mode == "times_per_period":
+            count = int(item.get("times_per_period") or 1)
+            return f"Any Day In Period ({count}x)"
+        day = item.get("day_of_week")
+        if day is None:
+            return "-"
+        return weekday_names[int(day)]
+
     weekly_default_rows = "".join(
         f"""
         <tr>
           <td>{escape(str(item['child_name']))}</td>
           <td>${float(weekly_default_amounts.get(int(item['child_id']), 0.0)):.2f}</td>
           <td>{escape(str(item['task_name']))}</td>
-          <td>{weekday_labels[int(item['day_of_week'])]}</td>
+          <td>{escape(weekly_plan_rule_label(item))}</td>
           <td>{escape(str(item.get('due_time') or '-'))}</td>
           <td>
             <form method="post" action="/delete-weekly-allowance-item">
@@ -1572,7 +1586,7 @@ def _parent_page(
           <td>{escape(str(item.get('week_key') or ''))}</td>
           <td>${float(get_weekly_allowance_status(int(item['child_id']), str(item['week_key']))['allowance_amount']):.2f}</td>
           <td>{escape(str(item['task_name']))}</td>
-          <td>{weekday_labels[int(item['day_of_week'])]}</td>
+          <td>{escape(weekly_plan_rule_label(item))}</td>
           <td>{escape(str(item.get('due_time') or '-'))}</td>
           <td>
             <form method="post" action="/delete-weekly-allowance-item">
@@ -2000,13 +2014,29 @@ def _parent_page(
                 </div>
                 <div class="planner-row">
                   <div class="planner-field">
+                    <label for="default-chore-period-mode">Schedule Rule</label>
+                    <select id="default-chore-period-mode" name="period_mode" required>
+                      <option value="day_of_week">Specific Day</option>
+                      <option value="all_days">All Days</option>
+                      <option value="times_per_period">Any Day In Period</option>
+                    </select>
+                    <small>`Specific Day` uses the day picker below. `All Days` creates one chore for each day. `Any Day In Period` lets you pick how many times it must be done during the week.</small>
+                  </div>
+                  <div class="planner-field">
                     <label for="default-chore-day">Day Of Week</label>
-                    <select id="default-chore-day" name="day_of_week" required>
+                    <select id="default-chore-day" name="day_of_week">
                       <option value="">Choose day</option>
                       {weekday_option_tags}
                     </select>
-                    <small>Pick when this weekly chore should show up for the child.</small>
+                    <small>Use this only for `Specific Day` chores.</small>
                   </div>
+                  <div class="planner-field">
+                    <label for="default-chore-count">Times In Period</label>
+                    <input id="default-chore-count" type="number" name="times_per_period" min="1" max="7" value="1" />
+                    <small>Use this for `Any Day In Period`. Example: `2` means the chore must be completed twice sometime during the week.</small>
+                  </div>
+                </div>
+                <div class="planner-row">
                   <div class="planner-field">
                     <label for="default-chore-time">Due Time</label>
                     <input id="default-chore-time" name="due_time" placeholder="HH:MM" />
@@ -2015,7 +2045,7 @@ def _parent_page(
                 </div>
                 <button type="submit">Add Default Chore</button>
               </form>
-              <table><thead><tr><th>Child</th><th>Amount</th><th>Task</th><th>Weekday</th><th>Due</th><th>Action</th></tr></thead>
+              <table><thead><tr><th>Child</th><th>Amount</th><th>Task</th><th>Schedule</th><th>Due</th><th>Action</th></tr></thead>
               <tbody>{weekly_default_rows if weekly_default_rows else '<tr><td colspan="6">No default-week chores yet.</td></tr>'}</tbody></table>
             </div>
             <div>
@@ -2062,13 +2092,29 @@ def _parent_page(
                     </select>
                   </div>
                   <div class="planner-field">
+                    <label for="override-chore-period-mode">Schedule Rule</label>
+                    <select id="override-chore-period-mode" name="period_mode" required>
+                      <option value="day_of_week">Specific Day</option>
+                      <option value="all_days">All Days</option>
+                      <option value="times_per_period">Any Day In Period</option>
+                    </select>
+                    <small>Use `All Days` for chores like daily reading. Use `Any Day In Period` for chores that only need a weekly count.</small>
+                  </div>
+                  <div class="planner-field">
                     <label for="override-chore-day">Day Of Week</label>
-                    <select id="override-chore-day" name="day_of_week" required>
+                    <select id="override-chore-day" name="day_of_week">
                       <option value="">Choose day</option>
                       {weekday_option_tags}
                     </select>
-                    <small>Pick the day this override chore belongs to in the selected week.</small>
+                    <small>Use this only for `Specific Day` override chores.</small>
                   </div>
+                  <div class="planner-field">
+                    <label for="override-chore-count">Times In Period</label>
+                    <input id="override-chore-count" type="number" name="times_per_period" min="1" max="7" value="1" />
+                    <small>Example: `2` means the child can do the task any two times in that week.</small>
+                  </div>
+                </div>
+                <div class="planner-row">
                   <div class="planner-field">
                     <label for="override-chore-time">Due Time</label>
                     <input id="override-chore-time" name="due_time" placeholder="HH:MM" />
@@ -2077,7 +2123,7 @@ def _parent_page(
                 </div>
                 <button type="submit">Add Override Chore</button>
               </form>
-              <table><thead><tr><th>Child</th><th>Week</th><th>Amount</th><th>Task</th><th>Weekday</th><th>Due</th><th>Action</th></tr></thead>
+              <table><thead><tr><th>Child</th><th>Week</th><th>Amount</th><th>Task</th><th>Schedule</th><th>Due</th><th>Action</th></tr></thead>
               <tbody>{weekly_override_rows if weekly_override_rows else '<tr><td colspan="7">No current-week override chores yet.</td></tr>'}</tbody></table>
             </div>
           </div>
@@ -3466,10 +3512,13 @@ def create_app() -> Callable:
                 result = _redirect("/parent?msg=Weekly+allowance+override+saved")
             elif method == "POST" and path == "/add-weekly-allowance-item":
                 scope = form.get("scope", "default").strip().lower()
+                day_raw = form.get("day_of_week", "").strip()
                 add_weekly_allowance_plan_item(
                     child_id=int(form.get("child_id", "0")),
                     task_id=int(form.get("task_id", "0")),
-                    day_of_week=int(form.get("day_of_week", "0")),
+                    day_of_week=int(day_raw) if day_raw else None,
+                    period_mode=form.get("period_mode", "day_of_week"),
+                    times_per_period=int(form.get("times_per_period", "1") or "1"),
                     due_time=form.get("due_time", "") or None,
                     week_key=form.get("week_key", "") if scope == "override" else None,
                 )

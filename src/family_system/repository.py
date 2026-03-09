@@ -17,6 +17,9 @@ WEEKLY_REQUIRED_MINIMUM = 3
 CARE_TYPES = ("feed", "water", "nurture")
 WEEKLY_ALLOWANCE_DEFAULT_SCOPE = "weekly_allowance_default"
 WEEKLY_ALLOWANCE_OVERRIDE_SCOPE = "weekly_allowance_override"
+WEEKLY_PERIOD_DAY_OF_WEEK = "day_of_week"
+WEEKLY_PERIOD_ALL_DAYS = "all_days"
+WEEKLY_PERIOD_TIMES_PER_PERIOD = "times_per_period"
 
 
 def _pin_hash(pin: str) -> str:
@@ -72,6 +75,24 @@ def _week_bounds(week_key: str) -> tuple[date, date]:
     start = date.fromisocalendar(iso_year, iso_week, 1)
     end = start + timedelta(days=6)
     return start, end
+
+
+def _normalize_weekly_period_mode(period_mode: str | None) -> str:
+    cleaned = (period_mode or WEEKLY_PERIOD_DAY_OF_WEEK).strip().lower()
+    if cleaned not in (
+        WEEKLY_PERIOD_DAY_OF_WEEK,
+        WEEKLY_PERIOD_ALL_DAYS,
+        WEEKLY_PERIOD_TIMES_PER_PERIOD,
+    ):
+        raise ValueError("Invalid weekly period mode")
+    return cleaned
+
+
+def _normalize_times_per_period(times_per_period: int | None) -> int:
+    value = int(times_per_period or 1)
+    if value < 1 or value > 7:
+        raise ValueError("times_per_period must be between 1 and 7")
+    return value
 
 
 def add_child(
@@ -3565,6 +3586,8 @@ def add_task_schedule(
     cadence: str,
     child_id: int | None = None,
     day_of_week: int | None = None,
+    period_mode: str = WEEKLY_PERIOD_DAY_OF_WEEK,
+    times_per_period: int = 1,
     due_time: str | None = None,
     plan_scope: str = "standard",
     week_key: str | None = None,
@@ -3572,10 +3595,25 @@ def add_task_schedule(
     scope = (plan_scope or "standard").strip()
     if scope not in ("standard", WEEKLY_ALLOWANCE_DEFAULT_SCOPE, WEEKLY_ALLOWANCE_OVERRIDE_SCOPE):
         raise ValueError("Invalid schedule scope")
-    if cadence == "weekly" and day_of_week is None:
-        raise ValueError("Weekly schedules require day_of_week (0=Mon..6=Sun)")
+    normalized_period_mode = _normalize_weekly_period_mode(period_mode)
+    normalized_times_per_period = _normalize_times_per_period(times_per_period)
     if cadence == "daily":
         day_of_week = None
+        normalized_period_mode = WEEKLY_PERIOD_DAY_OF_WEEK
+        normalized_times_per_period = 1
+    elif cadence == "weekly":
+        if scope == "standard":
+            normalized_period_mode = WEEKLY_PERIOD_DAY_OF_WEEK
+            normalized_times_per_period = 1
+        if normalized_period_mode == WEEKLY_PERIOD_DAY_OF_WEEK:
+            if day_of_week is None:
+                raise ValueError("Weekly schedules require day_of_week (0=Mon..6=Sun)")
+        else:
+            if scope not in (WEEKLY_ALLOWANCE_DEFAULT_SCOPE, WEEKLY_ALLOWANCE_OVERRIDE_SCOPE):
+                raise ValueError("Only weekly allowance plans support all-days or times-per-period rules")
+            day_of_week = None
+            if normalized_period_mode != WEEKLY_PERIOD_TIMES_PER_PERIOD:
+                normalized_times_per_period = 1
     if due_time:
         due_time = _as_hhmm(due_time)
     normalized_week_key = None
@@ -3597,10 +3635,30 @@ def add_task_schedule(
     with get_connection() as conn:
         cursor = conn.execute(
             """
-            INSERT INTO task_schedules (task_id, child_id, cadence, day_of_week, due_time, plan_scope, week_key)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO task_schedules (
+                task_id,
+                child_id,
+                cadence,
+                day_of_week,
+                period_mode,
+                times_per_period,
+                due_time,
+                plan_scope,
+                week_key
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (task_id, child_id, cadence, day_of_week, due_time, scope, normalized_week_key),
+            (
+                task_id,
+                child_id,
+                cadence,
+                day_of_week,
+                normalized_period_mode,
+                normalized_times_per_period,
+                due_time,
+                scope,
+                normalized_week_key,
+            ),
         )
         return int(cursor.lastrowid)
 
@@ -3615,6 +3673,8 @@ def list_task_schedules(active_only: bool = True) -> Iterable[dict]:
             c.name AS child_name,
             ts.cadence,
             ts.day_of_week,
+            ts.period_mode,
+            ts.times_per_period,
             ts.due_time,
             ts.plan_scope,
             ts.week_key,
@@ -3638,6 +3698,8 @@ def update_task_schedule(
     cadence: str,
     child_id: int | None = None,
     day_of_week: int | None = None,
+    period_mode: str = WEEKLY_PERIOD_DAY_OF_WEEK,
+    times_per_period: int = 1,
     due_time: str | None = None,
     plan_scope: str = "standard",
     week_key: str | None = None,
@@ -3645,10 +3707,25 @@ def update_task_schedule(
     scope = (plan_scope or "standard").strip()
     if scope not in ("standard", WEEKLY_ALLOWANCE_DEFAULT_SCOPE, WEEKLY_ALLOWANCE_OVERRIDE_SCOPE):
         raise ValueError("Invalid schedule scope")
-    if cadence == "weekly" and day_of_week is None:
-        raise ValueError("Weekly schedules require day_of_week (0=Mon..6=Sun)")
+    normalized_period_mode = _normalize_weekly_period_mode(period_mode)
+    normalized_times_per_period = _normalize_times_per_period(times_per_period)
     if cadence == "daily":
         day_of_week = None
+        normalized_period_mode = WEEKLY_PERIOD_DAY_OF_WEEK
+        normalized_times_per_period = 1
+    elif cadence == "weekly":
+        if scope == "standard":
+            normalized_period_mode = WEEKLY_PERIOD_DAY_OF_WEEK
+            normalized_times_per_period = 1
+        if normalized_period_mode == WEEKLY_PERIOD_DAY_OF_WEEK:
+            if day_of_week is None:
+                raise ValueError("Weekly schedules require day_of_week (0=Mon..6=Sun)")
+        else:
+            if scope not in (WEEKLY_ALLOWANCE_DEFAULT_SCOPE, WEEKLY_ALLOWANCE_OVERRIDE_SCOPE):
+                raise ValueError("Only weekly allowance plans support all-days or times-per-period rules")
+            day_of_week = None
+            if normalized_period_mode != WEEKLY_PERIOD_TIMES_PER_PERIOD:
+                normalized_times_per_period = 1
     if due_time:
         due_time = _as_hhmm(due_time)
     normalized_week_key = None
@@ -3675,12 +3752,25 @@ def update_task_schedule(
                 child_id = ?,
                 cadence = ?,
                 day_of_week = ?,
+                period_mode = ?,
+                times_per_period = ?,
                 due_time = ?,
                 plan_scope = ?,
                 week_key = ?
             WHERE id = ?
             """,
-            (task_id, child_id, cadence, day_of_week, due_time, scope, normalized_week_key, schedule_id),
+            (
+                task_id,
+                child_id,
+                cadence,
+                day_of_week,
+                normalized_period_mode,
+                normalized_times_per_period,
+                due_time,
+                scope,
+                normalized_week_key,
+                schedule_id,
+            ),
         )
         return cursor.rowcount > 0
 
@@ -3777,7 +3867,9 @@ def set_weekly_allowance_override_amount(child_id: int, week_key: str, amount: f
 def add_weekly_allowance_plan_item(
     child_id: int,
     task_id: int,
-    day_of_week: int,
+    day_of_week: int | None = None,
+    period_mode: str = WEEKLY_PERIOD_DAY_OF_WEEK,
+    times_per_period: int = 1,
     due_time: str | None = None,
     week_key: str | None = None,
 ) -> int:
@@ -3796,6 +3888,8 @@ def add_weekly_allowance_plan_item(
         cadence="weekly",
         child_id=child_id,
         day_of_week=day_of_week,
+        period_mode=period_mode,
+        times_per_period=times_per_period,
         due_time=due_time,
         plan_scope=scope,
         week_key=week_key,
@@ -3831,6 +3925,8 @@ def list_weekly_allowance_plan_items(
             ts.child_id,
             c.name AS child_name,
             ts.day_of_week,
+            ts.period_mode,
+            ts.times_per_period,
             ts.due_time,
             ts.plan_scope,
             ts.week_key,
@@ -3850,7 +3946,14 @@ def list_weekly_allowance_plan_items(
         params.extend([WEEKLY_ALLOWANCE_OVERRIDE_SCOPE, normalized_week_key, WEEKLY_ALLOWANCE_DEFAULT_SCOPE])
     if not include_inactive:
         query += " AND ts.active = 1"
-    query += " ORDER BY c.name ASC, ts.plan_scope ASC, COALESCE(ts.week_key, ''), ts.day_of_week ASC, COALESCE(ts.due_time, '') ASC, t.name ASC"
+    query += (
+        " ORDER BY c.name ASC, ts.plan_scope ASC, COALESCE(ts.week_key, ''), "
+        "CASE ts.period_mode "
+        f"WHEN '{WEEKLY_PERIOD_ALL_DAYS}' THEN 0 "
+        f"WHEN '{WEEKLY_PERIOD_TIMES_PER_PERIOD}' THEN 1 "
+        "ELSE 2 END ASC, "
+        "COALESCE(ts.day_of_week, 99) ASC, COALESCE(ts.due_time, '') ASC, t.name ASC"
+    )
     with get_connection() as conn:
         rows = conn.execute(query, tuple(params)).fetchall()
         return [dict(row) for row in rows]
@@ -3874,24 +3977,26 @@ def clone_weekly_allowance_override_from_default(child_id: int, week_key: str) -
         )
         default_rows = conn.execute(
             """
-            SELECT task_id, day_of_week, due_time
+            SELECT task_id, day_of_week, period_mode, times_per_period, due_time
             FROM task_schedules
             WHERE child_id = ?
               AND plan_scope = ?
               AND active = 1
-            ORDER BY day_of_week ASC, COALESCE(due_time, '') ASC, id ASC
+            ORDER BY COALESCE(day_of_week, 99) ASC, COALESCE(due_time, '') ASC, id ASC
             """,
             (child_id, WEEKLY_ALLOWANCE_DEFAULT_SCOPE),
         ).fetchall()
         existing = {
             (
                 int(row["task_id"]),
-                int(row["day_of_week"]),
+                row["day_of_week"],
+                str(row["period_mode"] or WEEKLY_PERIOD_DAY_OF_WEEK),
+                int(row["times_per_period"] or 1),
                 str(row["due_time"] or ""),
             )
             for row in conn.execute(
                 """
-                SELECT task_id, day_of_week, due_time
+                SELECT task_id, day_of_week, period_mode, times_per_period, due_time
                 FROM task_schedules
                 WHERE child_id = ?
                   AND plan_scope = ?
@@ -3904,20 +4009,34 @@ def clone_weekly_allowance_override_from_default(child_id: int, week_key: str) -
         for row in default_rows:
             signature = (
                 int(row["task_id"]),
-                int(row["day_of_week"]),
+                row["day_of_week"],
+                str(row["period_mode"] or WEEKLY_PERIOD_DAY_OF_WEEK),
+                int(row["times_per_period"] or 1),
                 str(row["due_time"] or ""),
             )
             if signature in existing:
                 continue
             conn.execute(
                 """
-                INSERT INTO task_schedules (task_id, child_id, cadence, day_of_week, due_time, plan_scope, week_key)
-                VALUES (?, ?, 'weekly', ?, ?, ?, ?)
+                INSERT INTO task_schedules (
+                    task_id,
+                    child_id,
+                    cadence,
+                    day_of_week,
+                    period_mode,
+                    times_per_period,
+                    due_time,
+                    plan_scope,
+                    week_key
+                )
+                VALUES (?, ?, 'weekly', ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     int(row["task_id"]),
                     child_id,
-                    int(row["day_of_week"]),
+                    row["day_of_week"],
+                    str(row["period_mode"] or WEEKLY_PERIOD_DAY_OF_WEEK),
+                    int(row["times_per_period"] or 1),
                     row["due_time"],
                     WEEKLY_ALLOWANCE_OVERRIDE_SCOPE,
                     normalized_week_key,
@@ -4047,7 +4166,17 @@ def generate_task_instances(start_on: str | date, end_on: str | date) -> int:
     with get_connection() as conn:
         schedules = conn.execute(
             """
-            SELECT id, task_id, child_id, cadence, day_of_week, due_time, plan_scope, week_key
+            SELECT
+                id,
+                task_id,
+                child_id,
+                cadence,
+                day_of_week,
+                period_mode,
+                times_per_period,
+                due_time,
+                plan_scope,
+                week_key
             FROM task_schedules
             WHERE active = 1
             """
@@ -4069,10 +4198,20 @@ def generate_task_instances(start_on: str | date, end_on: str | date) -> int:
             week_key = current_week_key(current)
             for schedule in schedules:
                 cadence = str(schedule["cadence"])
-                if cadence == "weekly" and int(schedule["day_of_week"]) != weekday:
-                    continue
                 if cadence not in ("daily", "weekly"):
                     continue
+                if cadence == "weekly":
+                    period_mode = str(schedule["period_mode"] or WEEKLY_PERIOD_DAY_OF_WEEK)
+                    if period_mode == WEEKLY_PERIOD_DAY_OF_WEEK:
+                        if int(schedule["day_of_week"]) != weekday:
+                            continue
+                    elif period_mode == WEEKLY_PERIOD_ALL_DAYS:
+                        pass
+                    elif period_mode == WEEKLY_PERIOD_TIMES_PER_PERIOD:
+                        if weekday >= int(schedule["times_per_period"] or 1):
+                            continue
+                    else:
+                        continue
                 plan_scope = str(schedule["plan_scope"] or "standard")
                 if plan_scope == WEEKLY_ALLOWANCE_OVERRIDE_SCOPE:
                     if str(schedule["week_key"] or "") != week_key:
