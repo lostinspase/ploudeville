@@ -1923,43 +1923,6 @@ def _parent_page(
         <button type="button" data-view="admin">Admin</button>
       </div>
       <section class="two-col parent-panel">
-      <div class="card full-width-card">
-        <h3>Add Task</h3>
-        <p class="muted">Create a reusable task here, then assign it in Daily Ops as a default or override weekly chore for a child.</p>
-        <form method="post" action="/add-task" class="task-builder-form planner-form">
-          <div class="planner-row">
-            <div class="planner-field">
-              <label for="task-name">Task Name</label>
-              <input id="task-name" name="name" placeholder="Unload Dishwasher" required />
-            </div>
-            <div class="planner-field">
-              <label for="task-rank">Task Type</label>
-              <select id="task-rank" name="rank">
-                <option value="required">required</option>
-                <option value="optional">optional</option>
-              </select>
-              <small>`required` can count toward weekly allowance plans. `optional` is for bonus items.</small>
-            </div>
-          </div>
-          <div class="planner-row">
-            <div class="planner-field">
-              <label for="task-payout">Default Payout Type</label>
-              <select id="task-payout" name="payout">
-                <option value="allowance">allowance</option>
-                <option value="screen_time">screen_time</option>
-                <option value="points">points</option>
-              </select>
-              <small>Used when the task is rewarded by itself outside a weekly allowance plan.</small>
-            </div>
-            <div class="planner-field">
-              <label for="task-value">Per-Task Value (Optional)</label>
-              <input id="task-value" type="number" name="value" step="0.01" min="0" placeholder="0" />
-              <small>Leave this as `0` for chores that only count toward the weekly allowance. Use a number only if the task should also pay by itself.</small>
-            </div>
-          </div>
-          <button type="submit">Add Task</button>
-        </form>
-      </div>
       <div class="parent-panel-column">
         <div class="card">
           <div class="stack">
@@ -2148,6 +2111,44 @@ def _parent_page(
           </form>
           <table><thead><tr><th>Date</th><th>Child</th><th>Opening Balance</th><th>Rate</th><th>Interest</th><th>Logged At</th></tr></thead>
           <tbody>{interest_accrual_rows if interest_accrual_rows else '<tr><td colspan="6">No interest accruals yet.</td></tr>'}</tbody></table>
+        </div>
+
+        <div class="card">
+          <h3>Add Task</h3>
+          <p class="muted">Create a reusable task here, then assign it in Daily Ops as a default or override weekly chore for a child.</p>
+          <form method="post" action="/add-task" class="task-builder-form planner-form">
+            <div class="planner-row">
+              <div class="planner-field">
+                <label for="task-name">Task Name</label>
+                <input id="task-name" name="name" placeholder="Unload Dishwasher" required />
+              </div>
+              <div class="planner-field">
+                <label for="task-rank">Task Type</label>
+                <select id="task-rank" name="rank">
+                  <option value="required">required</option>
+                  <option value="optional">optional</option>
+                </select>
+                <small>`required` can count toward weekly allowance plans. `optional` is for bonus items.</small>
+              </div>
+            </div>
+            <div class="planner-row">
+              <div class="planner-field">
+                <label for="task-payout">Default Payout Type</label>
+                <select id="task-payout" name="payout">
+                  <option value="allowance">allowance</option>
+                  <option value="screen_time">screen_time</option>
+                  <option value="points">points</option>
+                </select>
+                <small>Used when the task is rewarded by itself outside a weekly allowance plan.</small>
+              </div>
+              <div class="planner-field">
+                <label for="task-value">Per-Task Value (Optional)</label>
+                <input id="task-value" type="number" name="value" step="0.01" min="0" placeholder="0" />
+                <small>Leave this as `0` for chores that only count toward the weekly allowance. Use a number only if the task should also pay by itself.</small>
+              </div>
+            </div>
+            <button type="submit">Add Task</button>
+          </form>
         </div>
 
         <div class="card">
@@ -2347,16 +2348,6 @@ def _parent_page(
         </div>
 
         <div class="card">
-          <h3>Add Reward</h3>
-          <form method="post" action="/add-reward">
-            <input name="name" placeholder="Reward name" required />
-            <select name="type"><option value="allowance">allowance</option><option value="screen_time">screen_time</option><option value="privilege">privilege</option></select>
-            <input type="number" name="cost" step="0.01" min="0" required />
-            <button type="submit">Add</button>
-          </form>
-        </div>
-
-        <div class="card">
           <h3>Add Recurring Schedule</h3>
           <form method="post" action="/add-schedule">
             <select name="task_id" required>
@@ -2380,6 +2371,34 @@ def _parent_page(
             <input type="number" name="amount" step="0.01" required />
             <input name="note" placeholder="Reason" />
             <button type="submit">Adjust</button>
+          </form>
+        </div>
+
+        <div class="card">
+          <h3>Add Reward</h3>
+          <form method="post" action="/add-reward" class="planner-form">
+            <div class="planner-row">
+              <div class="planner-field">
+                <label for="reward-name">Reward Name</label>
+                <input id="reward-name" name="name" placeholder="Ice cream date" required />
+              </div>
+              <div class="planner-field">
+                <label for="reward-type">Reward Type</label>
+                <select id="reward-type" name="type">
+                  <option value="allowance">allowance</option>
+                  <option value="screen_time">screen_time</option>
+                  <option value="privilege">privilege</option>
+                </select>
+              </div>
+            </div>
+            <div class="planner-row">
+              <div class="planner-field">
+                <label for="reward-cost">Cost</label>
+                <input id="reward-cost" type="number" name="cost" step="0.01" min="0" placeholder="5.00" required />
+                <small>How much allowance, screen time, or other balance the reward costs to redeem.</small>
+              </div>
+            </div>
+            <button type="submit">Add Reward</button>
           </form>
         </div>
 
