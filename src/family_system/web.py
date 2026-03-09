@@ -1547,6 +1547,16 @@ def _parent_page(
         f'<option value="{index}">{label}</option>'
         for index, label in enumerate(weekday_names)
     )
+    children_by_id = {int(child["id"]): child for child in children}
+    default_plan_items_by_child: dict[int, list[dict]] = {int(child["id"]): [] for child in children}
+    override_plan_items_by_child: dict[int, list[dict]] = {int(child["id"]): [] for child in children}
+    for item in weekly_plan_items:
+        child_id = int(item["child_id"])
+        scope = str(item.get("plan_scope") or "")
+        if scope == "weekly_allowance_default":
+            default_plan_items_by_child.setdefault(child_id, []).append(item)
+        elif scope == "weekly_allowance_override" and str(item.get("week_key") or "") == current_week:
+            override_plan_items_by_child.setdefault(child_id, []).append(item)
 
     def weekly_plan_rule_label(item: dict) -> str:
         mode = str(item.get("period_mode") or "day_of_week")
@@ -1559,6 +1569,90 @@ def _parent_page(
         if day is None:
             return "-"
         return weekday_names[int(day)]
+
+    current_year_text, current_week_text = current_week.split("-W", 1)
+    current_week_start = date.fromisocalendar(int(current_year_text), int(current_week_text), 1)
+
+    def expand_weekly_deliverables(items: list[dict]) -> list[dict]:
+        expanded: list[dict] = []
+        for item in items:
+            task_name = str(item.get("task_name") or "")
+            due_time = str(item.get("due_time") or "")
+            mode = str(item.get("period_mode") or "day_of_week")
+            if mode == "all_days":
+                for index, weekday_name in enumerate(weekday_names):
+                    expanded.append(
+                        {
+                            "label": f"{weekday_name}: {task_name}",
+                            "due_time": due_time,
+                            "sort_key": current_week_start + timedelta(days=index),
+                        }
+                    )
+            elif mode == "times_per_period":
+                times = int(item.get("times_per_period") or 1)
+                for index in range(times):
+                    expanded.append(
+                        {
+                            "label": f"Any Day In Period #{index + 1}: {task_name}",
+                            "due_time": due_time,
+                            "sort_key": current_week_start + timedelta(days=index),
+                        }
+                    )
+            else:
+                day_index = int(item.get("day_of_week") or 0)
+                expanded.append(
+                    {
+                        "label": f"{weekday_names[day_index]}: {task_name}",
+                        "due_time": due_time,
+                        "sort_key": current_week_start + timedelta(days=day_index),
+                    }
+                )
+        expanded.sort(key=lambda row: (row["sort_key"], row["label"], row["due_time"]))
+        return expanded
+
+    def plan_items_table_rows(items: list[dict], include_week: bool = False) -> str:
+        rows = []
+        for item in items:
+            week_cell = f"<td>{escape(str(item.get('week_key') or ''))}</td>" if include_week else ""
+            rows.append(
+                f"""
+                <tr>
+                  <td>{escape(str(item['task_name']))}</td>
+                  {week_cell}
+                  <td>{escape(weekly_plan_rule_label(item))}</td>
+                  <td>{escape(str(item.get('due_time') or '-'))}</td>
+                  <td>
+                    <form method="post" action="/delete-weekly-allowance-item">
+                      <input type="hidden" name="schedule_id" value="{item['id']}" />
+                      <button type="submit">Delete</button>
+                    </form>
+                  </td>
+                </tr>
+                """
+            )
+        return "".join(rows)
+
+    def deliverable_rows(items: list[dict]) -> str:
+        expanded = expand_weekly_deliverables(items)
+        return "".join(
+            f"""
+            <tr>
+              <td>{escape(str(row['label']))}</td>
+              <td>{escape(str(row['due_time'] or '-'))}</td>
+            </tr>
+            """
+            for row in expanded
+        )
+
+    def deliverable_tooltip(items: list[dict]) -> str:
+        expanded = expand_weekly_deliverables(items)
+        if not expanded:
+            return "No deliverables in this period."
+        lines = []
+        for row in expanded[:12]:
+            due_suffix = f" ({row['due_time']})" if row["due_time"] else ""
+            lines.append(f"{row['label']}{due_suffix}")
+        return "\n".join(lines) + ("" if len(expanded) <= 12 else f"\n...and {len(expanded) - 12} more")
 
     weekly_default_rows = "".join(
         f"""
@@ -1599,15 +1693,55 @@ def _parent_page(
         for item in weekly_plan_items
         if str(item["plan_scope"]) == "weekly_allowance_override" and str(item.get("week_key") or "") == current_week
     )
+    weekly_plan_detail_cards = "".join(
+        (
+            f"""
+            <article class="card" id="weekly-plan-child-{child_id}">
+              <h4>{escape(str(children_by_id[child_id]['name']))}</h4>
+              <p class="muted">Default amount: ${float(weekly_default_amounts.get(child_id, 0.0)):.2f} | Current source: {escape(str(status['plan_source']))} | Current progress: {status['approved_count']} / {status['total_planned']} | Credited: {'yes' if status['credited'] else 'no'}</p>
+              <form method="post" action="/set-weekly-allowance-default">
+                <input type="hidden" name="child_id" value="{child_id}" />
+                <input type="number" min="0" step="0.01" name="amount" value="{float(weekly_default_amounts.get(child_id, 0.0)):.2f}" required />
+                <button type="submit">Save Default Amount</button>
+              </form>
+              <h5>Default Period Rules</h5>
+              <table>
+                <thead><tr><th>Task</th><th>Schedule</th><th>Due</th><th>Action</th></tr></thead>
+                <tbody>{plan_items_table_rows(default_plan_items_by_child.get(child_id, [])) or '<tr><td colspan="4">No default rules yet.</td></tr>'}</tbody>
+              </table>
+              <h5>Current Period Deliverables ({status['week_key']})</h5>
+              <p class="muted">This is the effective list behind the progress count for this child. {('Override is active for this week.' if str(status['plan_source']) == 'override' else 'Default plan is active for this week.')}</p>
+              <table>
+                <thead><tr><th>Deliverable</th><th>Due</th></tr></thead>
+                <tbody>{deliverable_rows(override_plan_items_by_child.get(child_id, []) if str(status['plan_source']) == 'override' else default_plan_items_by_child.get(child_id, [])) or '<tr><td colspan="2">No deliverables in this period.</td></tr>'}</tbody>
+              </table>
+              {''
+                if str(status['plan_source']) != 'override'
+                else f'''
+              <h5>Current Week Override Rules</h5>
+              <table>
+                <thead><tr><th>Task</th><th>Week</th><th>Schedule</th><th>Due</th><th>Action</th></tr></thead>
+                <tbody>{plan_items_table_rows(override_plan_items_by_child.get(child_id, []), include_week=True) or '<tr><td colspan="5">No override rules yet.</td></tr>'}</tbody>
+              </table>
+              '''
+              }
+            </article>
+            """
+        )
+        for child, status in weekly_status_rows_data
+        for child_id in [int(child["id"])]
+    )
     weekly_status_rows = "".join(
         f"""
         <tr>
           <td>{escape(str(child['name']))}</td>
           <td>{escape(str(status['week_key']))}</td>
           <td>{escape(str(status['plan_source']))}</td>
-          <td>{status['approved_count']} / {status['total_planned']}</td>
+          <td>${float(weekly_default_amounts.get(int(child['id']), 0.0)):.2f} | {len(default_plan_items_by_child.get(int(child['id']), []))} rules</td>
+          <td title="{escape(deliverable_tooltip(override_plan_items_by_child.get(int(child['id']), []) if str(status['plan_source']) == 'override' else default_plan_items_by_child.get(int(child['id']), [])))}">{status['approved_count']} / {status['total_planned']}</td>
           <td>${float(status['allowance_amount']):.2f}</td>
           <td>{'yes' if status['credited'] else 'no'}</td>
+          <td><a href="#weekly-plan-child-{int(child['id'])}">View plan</a></td>
         </tr>
         """
         for child, status in weekly_status_rows_data
@@ -1981,8 +2115,11 @@ def _parent_page(
           <h3>Weekly Allowance Plans</h3>
           <p class="muted">Set a weekly allowance amount per child, define the default weekly chore baseline, and optionally override the current week. Weekly-plan chores do not pay per task; the allowance is credited once the effective week plan is fully approved.</p>
           <h4>Current Week Status ({current_week})</h4>
-          <table><thead><tr><th>Child</th><th>Week</th><th>Source</th><th>Progress</th><th>Allowance</th><th>Credited</th></tr></thead>
-          <tbody>{weekly_status_rows if weekly_status_rows else '<tr><td colspan="6">No weekly allowance plans yet.</td></tr>'}</tbody></table>
+          <table><thead><tr><th>Child</th><th>Week</th><th>Source</th><th>Default Period</th><th>Progress</th><th>Allowance</th><th>Credited</th><th>Details</th></tr></thead>
+          <tbody>{weekly_status_rows if weekly_status_rows else '<tr><td colspan="8">No weekly allowance plans yet.</td></tr>'}</tbody></table>
+          <h4>Plan Details By Child</h4>
+          <p class="muted">Use the links in the status table or hover over a progress count to see the deliverables behind it. Each child card below shows the saved default period, a quick default amount editor, and the effective deliverables for the current week.</p>
+          <div class="grid">{weekly_plan_detail_cards}</div>
           <div class="two-col">
             <div>
               <h4>Default Week</h4>
@@ -2045,6 +2182,8 @@ def _parent_page(
                 </div>
                 <button type="submit">Add Default Chore</button>
               </form>
+              <h5>Saved Default Rules</h5>
+              <p class="muted">These are the default weekly chores and allowance settings currently saved for each child.</p>
               <table><thead><tr><th>Child</th><th>Amount</th><th>Task</th><th>Schedule</th><th>Due</th><th>Action</th></tr></thead>
               <tbody>{weekly_default_rows if weekly_default_rows else '<tr><td colspan="6">No default-week chores yet.</td></tr>'}</tbody></table>
             </div>
@@ -2123,6 +2262,8 @@ def _parent_page(
                 </div>
                 <button type="submit">Add Override Chore</button>
               </form>
+              <h5>Saved Override Rules</h5>
+              <p class="muted">These rules replace the default plan for the selected current week when an override is active.</p>
               <table><thead><tr><th>Child</th><th>Week</th><th>Amount</th><th>Task</th><th>Schedule</th><th>Due</th><th>Action</th></tr></thead>
               <tbody>{weekly_override_rows if weekly_override_rows else '<tr><td colspan="7">No current-week override chores yet.</td></tr>'}</tbody></table>
             </div>

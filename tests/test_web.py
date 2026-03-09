@@ -404,10 +404,40 @@ def test_parent_page_shows_weekly_allowance_section(tmp_path) -> None:
     assert "Weekly Allowance Plans" in html
     assert "Default Week" in html
     assert "Current Week Override" in html
+    assert "Saved Default Rules" in html
+    assert "Saved Override Rules" in html
     assert "Toy pickup weekly" in html
+    assert "Default Period" in html
+    assert "Plan Details By Child" in html
+    assert f'href="#weekly-plan-child-{child_id}"' in html
     assert "All Days" in html
     assert "Any Day In Period" in html
     assert "Times In Period" in html
+
+
+def test_parent_weekly_allowance_details_show_default_rules_and_current_deliverables(tmp_path) -> None:
+    db.DATA_DIR = tmp_path
+    db.DB_PATH = tmp_path / "test_family.db"
+    db.init_db()
+
+    child_id = add_or_update_child("Gracelyn", 7)
+    read_task_id = add_task("Read 20 minutes", "required", "allowance", 0)
+    dish_task_id = add_task("Unload dishwasher", "required", "allowance", 0)
+    set_weekly_allowance_default_amount(child_id, 10.0)
+    add_weekly_allowance_plan_item(child_id=child_id, task_id=read_task_id, period_mode="all_days", due_time="18:00")
+    add_weekly_allowance_plan_item(child_id=child_id, task_id=dish_task_id, period_mode="times_per_period", times_per_period=2)
+
+    parent_cookie = f"{web.PARENT_COOKIE_NAME}={web._sign_parent()}"
+    status, content = _invoke_app("/parent", cookie=parent_cookie)
+
+    assert status.startswith("200")
+    html = content.decode("utf-8")
+    assert f'id="weekly-plan-child-{child_id}"' in html
+    assert "Default Period Rules" in html
+    assert "Current Period Deliverables" in html
+    assert "Monday: Read 20 minutes" in html
+    assert "Any Day In Period #1: Unload dishwasher" in html
+    assert "Any Day In Period #2: Unload dishwasher" in html
 
 
 def test_pet_species_contains_unicorn_and_alacorn(tmp_path) -> None:
