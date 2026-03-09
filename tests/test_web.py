@@ -412,6 +412,9 @@ def test_parent_page_shows_weekly_allowance_section(tmp_path) -> None:
     assert f'href="#weekly-plan-child-{child_id}"' in html
     assert 'data-weekly-plan-link="1"' in html
     assert "weekly-plan-card" in html
+    assert 'data-parent-view="daily"' in html
+    assert 'id="weekly-plan-selection"' in html
+    assert 'id="weekly-plan-clear"' in html
     assert "All Days" in html
     assert "Any Day In Period" in html
     assert "Times In Period" in html

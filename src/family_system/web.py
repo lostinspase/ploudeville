@@ -705,11 +705,22 @@ def _base_styles() -> str:
       transition: box-shadow 160ms ease, border-color 160ms ease, background 160ms ease;
     }
     .weekly-plan-card:target,
-    .weekly-plan-card.is-target {
+    .weekly-plan-card.is-target,
+    .weekly-plan-card.is-selected {
       border-color: #1f8a7b;
       background: #fff9ea;
       box-shadow: 0 0 0 3px rgba(31, 138, 123, 0.18), 0 6px 18px rgba(18, 110, 97, 0.14);
     }
+    .weekly-plan-card.is-selected { order: -1; }
+    .weekly-plan-card.is-dimmed { opacity: 0.45; }
+    .weekly-plan-selection {
+      display: none;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .weekly-plan-selection.visible { display: flex; }
     table { width: 100%; border-collapse: collapse; background: #fffdf7; border: 1px solid #eadaae; border-radius: 12px; overflow: hidden; }
     th, td { text-align: left; padding: 8px; border-bottom: 1px solid #efe4c7; font-size: 14px; vertical-align: top; }
     th { background: #fff3d4; font-size: 13px; }
@@ -1706,7 +1717,7 @@ def _parent_page(
     weekly_plan_detail_cards = "".join(
         (
             f"""
-            <article class="card weekly-plan-card" id="weekly-plan-child-{child_id}">
+            <article class="card weekly-plan-card" id="weekly-plan-child-{child_id}" data-weekly-plan-card="1" data-parent-view="daily" data-child-name="{escape(str(children_by_id[child_id]['name']))}">
               <h4>{escape(str(children_by_id[child_id]['name']))}</h4>
               <p class="muted">Default amount: ${float(weekly_default_amounts.get(child_id, 0.0)):.2f} | Current source: {escape(str(status['plan_source']))} | Current progress: {status['approved_count']} / {status['total_planned']} | Credited: {'yes' if status['credited'] else 'no'}</p>
               <form method="post" action="/set-weekly-allowance-default">
@@ -1748,10 +1759,10 @@ def _parent_page(
           <td>{escape(str(status['week_key']))}</td>
           <td>{escape(str(status['plan_source']))}</td>
           <td>${float(weekly_default_amounts.get(int(child['id']), 0.0)):.2f} | {len(default_plan_items_by_child.get(int(child['id']), []))} rules</td>
-          <td title="{escape(deliverable_tooltip(override_plan_items_by_child.get(int(child['id']), []) if str(status['plan_source']) == 'override' else default_plan_items_by_child.get(int(child['id']), [])))}">{status['approved_count']} / {status['total_planned']}</td>
+          <td>{status['approved_count']} / {status['total_planned']} deliverables</td>
           <td>${float(status['allowance_amount']):.2f}</td>
           <td>{'yes' if status['credited'] else 'no'}</td>
-          <td><a href="#weekly-plan-child-{int(child['id'])}" data-weekly-plan-link="1">View plan</a></td>
+          <td><a href="#weekly-plan-child-{int(child['id'])}" data-weekly-plan-link="1" data-child-name="{escape(str(child['name']))}">View plan</a></td>
         </tr>
         """
         for child, status in weekly_status_rows_data
@@ -2127,8 +2138,12 @@ def _parent_page(
           <h4>Current Week Status ({current_week})</h4>
           <table><thead><tr><th>Child</th><th>Week</th><th>Source</th><th>Default Period</th><th>Progress</th><th>Allowance</th><th>Credited</th><th>Details</th></tr></thead>
           <tbody>{weekly_status_rows if weekly_status_rows else '<tr><td colspan="8">No weekly allowance plans yet.</td></tr>'}</tbody></table>
-          <h4>Plan Details By Child</h4>
-          <p class="muted">Use the links in the status table or hover over a progress count to see the deliverables behind it. Each child card below shows the saved default period, a quick default amount editor, and the effective deliverables for the current week.</p>
+          <h4 id="weekly-plan-details">Plan Details By Child</h4>
+          <p class="muted">Use the links in the status table to jump to a child plan below. Each child card shows the saved default period, a quick default amount editor, and the effective deliverables for the current week.</p>
+          <div class="msg weekly-plan-selection" id="weekly-plan-selection">
+            <span id="weekly-plan-selection-text">Showing this child's plan details below.</span>
+            <button type="button" id="weekly-plan-clear">Show All Plans</button>
+          </div>
           <div class="grid">{weekly_plan_detail_cards}</div>
           <div class="two-col">
             <div>
@@ -2747,7 +2762,14 @@ def _parent_page(
         const cards = Array.from(panel.querySelectorAll(".card"));
         const columns = Array.from(panel.querySelectorAll(".parent-panel-column"));
         const weeklyPlanLinks = Array.from(document.querySelectorAll("[data-weekly-plan-link]"));
+        const weeklyPlanCards = Array.from(document.querySelectorAll("[data-weekly-plan-card]"));
+        const weeklyPlanSelection = document.getElementById("weekly-plan-selection");
+        const weeklyPlanSelectionText = document.getElementById("weekly-plan-selection-text");
+        const weeklyPlanClear = document.getElementById("weekly-plan-clear");
+        const weeklyPlanHeading = document.getElementById("weekly-plan-details");
         const classify = (card) => {{
+          const explicitView = card.getAttribute("data-parent-view");
+          if (explicitView) return explicitView;
           const h3 = card.querySelector("h3");
           const title = (h3 ? h3.textContent : "").toLowerCase();
           if (title.includes("pending reviews") || title.includes("weekly allowance")) return "daily";
@@ -2795,17 +2817,31 @@ def _parent_page(
           if (saved && buttons.some((button) => button.dataset.view === saved)) initial = saved;
         }} catch (err) {{}}
         apply(initial);
-        const focusWeeklyPlan = (hash) => {{
+        const clearWeeklyPlanSelection = () => {{
+          weeklyPlanCards.forEach((card) => {{
+            card.classList.remove("is-selected", "is-dimmed", "is-target");
+          }});
+          if (weeklyPlanSelection) weeklyPlanSelection.classList.remove("visible");
+        }};
+        const focusWeeklyPlan = (hash, childName) => {{
           if (!hash || !hash.startsWith("#weekly-plan-child-")) return;
           const target = document.querySelector(hash);
           if (!target) return;
           apply("daily");
-          target.classList.remove("is-target");
+          clearWeeklyPlanSelection();
+          weeklyPlanCards.forEach((card) => {{
+            card.classList.toggle("is-selected", card === target);
+            card.classList.toggle("is-dimmed", card !== target);
+          }});
+          if (weeklyPlanSelection && weeklyPlanSelectionText) {{
+            const resolvedName = childName || target.getAttribute("data-child-name") || "this child";
+            weeklyPlanSelectionText.textContent = "Showing " + resolvedName + "'s plan details below.";
+            weeklyPlanSelection.classList.add("visible");
+          }}
           window.requestAnimationFrame(() => {{
             target.classList.add("is-target");
             target.scrollIntoView({{ behavior: "smooth", block: "start" }});
           }});
-          window.setTimeout(() => target.classList.remove("is-target"), 1800);
         }};
         buttons.forEach((button) => {{
           button.addEventListener("click", () => apply(button.dataset.view || "daily"));
@@ -2818,9 +2854,20 @@ def _parent_page(
             if (window.location.hash !== hash) {{
               window.history.replaceState(null, "", hash);
             }}
-            focusWeeklyPlan(hash);
+            focusWeeklyPlan(hash, link.getAttribute("data-child-name") || "");
           }});
         }});
+        if (weeklyPlanClear) {{
+          weeklyPlanClear.addEventListener("click", () => {{
+            clearWeeklyPlanSelection();
+            if (window.location.hash.startsWith("#weekly-plan-child-")) {{
+              window.history.replaceState(null, "", "#weekly-plan-details");
+            }}
+            if (weeklyPlanHeading) {{
+              weeklyPlanHeading.scrollIntoView({{ behavior: "smooth", block: "start" }});
+            }}
+          }});
+        }}
         if (window.location.hash) {{
           focusWeeklyPlan(window.location.hash);
         }}
