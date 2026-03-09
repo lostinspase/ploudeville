@@ -46,7 +46,12 @@ def build_parser() -> argparse.ArgumentParser:
     add_task_parser.add_argument("--name", required=True)
     add_task_parser.add_argument("--rank", required=True, choices=[r.value for r in TaskRank])
     add_task_parser.add_argument("--payout", required=True, choices=[p.value for p in PayoutType])
-    add_task_parser.add_argument("--value", required=True, type=float)
+    add_task_parser.add_argument(
+        "--value",
+        type=float,
+        default=0.0,
+        help="Optional per-task payout value. Use 0 for chores that only count toward a weekly allowance plan.",
+    )
 
     sub.add_parser("list-tasks", help="List active tasks")
     add_schedule_parser = sub.add_parser("add-schedule", help="Add recurring task schedule")

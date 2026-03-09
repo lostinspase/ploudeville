@@ -32,6 +32,7 @@ from src.family_system.repository import (
     list_service_organizations,
     list_service_entries,
     list_task_schedules,
+    list_tasks,
     list_wallet_payouts,
     list_reading_logs,
     get_wallet_daily_interest_rate_percent,
@@ -1190,6 +1191,27 @@ def test_parent_page_shows_tab_navigation(tmp_path) -> None:
     assert "Daily Ops" in html
     assert "Allowance &amp; Money" in html
     assert "parent-tabbar" in html
+
+
+def test_parent_can_add_task_without_per_task_value(tmp_path) -> None:
+    db.DATA_DIR = tmp_path
+    db.DB_PATH = tmp_path / "test_family.db"
+    db.init_db()
+
+    parent_cookie = f"{web.PARENT_COOKIE_NAME}={web._sign_parent()}"
+    status, _ = _invoke_app(
+        "/add-task",
+        method="POST",
+        body="name=Unload+Dishwasher&rank=required&payout=allowance&value=",
+        cookie=parent_cookie,
+    )
+    assert status.startswith("303")
+
+    tasks = list_tasks()
+    task = next(t for t in tasks if str(t["name"]) == "Unload Dishwasher")
+    assert str(task["rank"]) == "required"
+    assert str(task["payout_type"]) == "allowance"
+    assert float(task["payout_value"]) == 0.0
 
 
 def test_ios_usage_sync_endpoint_persists_report(tmp_path) -> None:

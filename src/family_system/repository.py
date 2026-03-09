@@ -323,7 +323,7 @@ def weekly_required_completed_count(child_id: int, week_key: str) -> int:
             WHERE tc.child_id = ?
               AND tc.status = 'approved'
               AND t.rank = 'required'
-              AND date(tc.completed_at) BETWEEN date(?) AND date(?)
+              AND date(datetime(tc.completed_at, 'localtime')) BETWEEN date(?) AND date(?)
             """,
             (child_id, start.isoformat(), end.isoformat()),
         ).fetchone()
@@ -3312,14 +3312,20 @@ def review_service_hours(
     return True
 
 
-def add_task(name: str, rank: str, payout_type: str, payout_value: float) -> int:
+def add_task(name: str, rank: str, payout_type: str, payout_value: float = 0.0) -> int:
+    cleaned_name = name.strip()
+    value = round(float(payout_value), 2)
+    if not cleaned_name:
+        raise ValueError("Task name is required")
+    if value < 0:
+        raise ValueError("Task payout value must be >= 0")
     with get_connection() as conn:
         cursor = conn.execute(
             """
             INSERT INTO tasks (name, rank, payout_type, payout_value)
             VALUES (?, ?, ?, ?)
             """,
-            (name.strip(), rank, payout_type, payout_value),
+            (cleaned_name, rank, payout_type, value),
         )
         return int(cursor.lastrowid)
 

@@ -689,6 +689,13 @@ def _base_styles() -> str:
       line-height: 1.35;
     }
     .planner-form button { align-self: flex-start; }
+    .full-width-card { grid-column: 1 / -1; }
+    .task-builder-form {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      align-items: stretch;
+    }
     .card {
       background: var(--card); border: 1px solid #e7d9b8; border-radius: var(--radius);
       padding: 12px; box-shadow: 0 3px 9px rgba(33, 42, 40, 0.05);
@@ -1916,6 +1923,43 @@ def _parent_page(
         <button type="button" data-view="admin">Admin</button>
       </div>
       <section class="two-col parent-panel">
+      <div class="card full-width-card">
+        <h3>Add Task</h3>
+        <p class="muted">Create a reusable task here, then assign it in Daily Ops as a default or override weekly chore for a child.</p>
+        <form method="post" action="/add-task" class="task-builder-form planner-form">
+          <div class="planner-row">
+            <div class="planner-field">
+              <label for="task-name">Task Name</label>
+              <input id="task-name" name="name" placeholder="Unload Dishwasher" required />
+            </div>
+            <div class="planner-field">
+              <label for="task-rank">Task Type</label>
+              <select id="task-rank" name="rank">
+                <option value="required">required</option>
+                <option value="optional">optional</option>
+              </select>
+              <small>`required` can count toward weekly allowance plans. `optional` is for bonus items.</small>
+            </div>
+          </div>
+          <div class="planner-row">
+            <div class="planner-field">
+              <label for="task-payout">Default Payout Type</label>
+              <select id="task-payout" name="payout">
+                <option value="allowance">allowance</option>
+                <option value="screen_time">screen_time</option>
+                <option value="points">points</option>
+              </select>
+              <small>Used when the task is rewarded by itself outside a weekly allowance plan.</small>
+            </div>
+            <div class="planner-field">
+              <label for="task-value">Per-Task Value (Optional)</label>
+              <input id="task-value" type="number" name="value" step="0.01" min="0" placeholder="0" />
+              <small>Leave this as `0` for chores that only count toward the weekly allowance. Use a number only if the task should also pay by itself.</small>
+            </div>
+          </div>
+          <button type="submit">Add Task</button>
+        </form>
+      </div>
       <div class="parent-panel-column">
         <div class="card">
           <div class="stack">
@@ -2300,17 +2344,6 @@ def _parent_page(
             <button type="submit">Send Test</button>
           </form>
           <p class="muted">Uses child email/text from contact settings.</p>
-        </div>
-
-        <div class="card">
-          <h3>Add Task</h3>
-          <form method="post" action="/add-task">
-            <input name="name" placeholder="Task name" required />
-            <select name="rank"><option value="required">required</option><option value="optional">optional</option></select>
-            <select name="payout"><option value="allowance">allowance</option><option value="screen_time">screen_time</option><option value="points">points</option></select>
-            <input type="number" name="value" step="0.01" min="0" required />
-            <button type="submit">Add</button>
-          </form>
         </div>
 
         <div class="card">
@@ -3384,11 +3417,12 @@ def create_app() -> Callable:
                 )
                 result = _redirect(f"/parent?{urlencode({'msg': f'Reading credit awarded (completion #{completion_id})'})}")
             elif method == "POST" and path == "/add-task":
+                value_text = form.get("value", "").strip()
                 add_task(
                     name=form.get("name", ""),
                     rank=form.get("rank", ""),
                     payout_type=form.get("payout", ""),
-                    payout_value=float(form.get("value", "0")),
+                    payout_value=float(value_text) if value_text else 0.0,
                 )
                 result = _redirect("/parent?msg=Task+added")
             elif method == "POST" and path == "/add-reward":
