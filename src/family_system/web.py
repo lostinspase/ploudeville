@@ -700,6 +700,16 @@ def _base_styles() -> str:
       background: var(--card); border: 1px solid #e7d9b8; border-radius: var(--radius);
       padding: 12px; box-shadow: 0 3px 9px rgba(33, 42, 40, 0.05);
     }
+    .weekly-plan-card {
+      scroll-margin-top: 96px;
+      transition: box-shadow 160ms ease, border-color 160ms ease, background 160ms ease;
+    }
+    .weekly-plan-card:target,
+    .weekly-plan-card.is-target {
+      border-color: #1f8a7b;
+      background: #fff9ea;
+      box-shadow: 0 0 0 3px rgba(31, 138, 123, 0.18), 0 6px 18px rgba(18, 110, 97, 0.14);
+    }
     table { width: 100%; border-collapse: collapse; background: #fffdf7; border: 1px solid #eadaae; border-radius: 12px; overflow: hidden; }
     th, td { text-align: left; padding: 8px; border-bottom: 1px solid #efe4c7; font-size: 14px; vertical-align: top; }
     th { background: #fff3d4; font-size: 13px; }
@@ -1696,7 +1706,7 @@ def _parent_page(
     weekly_plan_detail_cards = "".join(
         (
             f"""
-            <article class="card" id="weekly-plan-child-{child_id}">
+            <article class="card weekly-plan-card" id="weekly-plan-child-{child_id}">
               <h4>{escape(str(children_by_id[child_id]['name']))}</h4>
               <p class="muted">Default amount: ${float(weekly_default_amounts.get(child_id, 0.0)):.2f} | Current source: {escape(str(status['plan_source']))} | Current progress: {status['approved_count']} / {status['total_planned']} | Credited: {'yes' if status['credited'] else 'no'}</p>
               <form method="post" action="/set-weekly-allowance-default">
@@ -1741,7 +1751,7 @@ def _parent_page(
           <td title="{escape(deliverable_tooltip(override_plan_items_by_child.get(int(child['id']), []) if str(status['plan_source']) == 'override' else default_plan_items_by_child.get(int(child['id']), [])))}">{status['approved_count']} / {status['total_planned']}</td>
           <td>${float(status['allowance_amount']):.2f}</td>
           <td>{'yes' if status['credited'] else 'no'}</td>
-          <td><a href="#weekly-plan-child-{int(child['id'])}">View plan</a></td>
+          <td><a href="#weekly-plan-child-{int(child['id'])}" data-weekly-plan-link="1">View plan</a></td>
         </tr>
         """
         for child, status in weekly_status_rows_data
@@ -2736,6 +2746,7 @@ def _parent_page(
         const buttons = Array.from(tabbar.querySelectorAll("button[data-view]"));
         const cards = Array.from(panel.querySelectorAll(".card"));
         const columns = Array.from(panel.querySelectorAll(".parent-panel-column"));
+        const weeklyPlanLinks = Array.from(document.querySelectorAll("[data-weekly-plan-link]"));
         const classify = (card) => {{
           const h3 = card.querySelector("h3");
           const title = (h3 ? h3.textContent : "").toLowerCase();
@@ -2784,8 +2795,37 @@ def _parent_page(
           if (saved && buttons.some((button) => button.dataset.view === saved)) initial = saved;
         }} catch (err) {{}}
         apply(initial);
+        const focusWeeklyPlan = (hash) => {{
+          if (!hash || !hash.startsWith("#weekly-plan-child-")) return;
+          const target = document.querySelector(hash);
+          if (!target) return;
+          apply("daily");
+          target.classList.remove("is-target");
+          window.requestAnimationFrame(() => {{
+            target.classList.add("is-target");
+            target.scrollIntoView({{ behavior: "smooth", block: "start" }});
+          }});
+          window.setTimeout(() => target.classList.remove("is-target"), 1800);
+        }};
         buttons.forEach((button) => {{
           button.addEventListener("click", () => apply(button.dataset.view || "daily"));
+        }});
+        weeklyPlanLinks.forEach((link) => {{
+          link.addEventListener("click", (event) => {{
+            event.preventDefault();
+            const hash = link.getAttribute("href") || "";
+            if (!hash) return;
+            if (window.location.hash !== hash) {{
+              window.history.replaceState(null, "", hash);
+            }}
+            focusWeeklyPlan(hash);
+          }});
+        }});
+        if (window.location.hash) {{
+          focusWeeklyPlan(window.location.hash);
+        }}
+        window.addEventListener("hashchange", () => {{
+          if (window.location.hash) focusWeeklyPlan(window.location.hash);
         }});
       }})();
     </script>
