@@ -404,8 +404,12 @@ def test_parent_page_shows_weekly_allowance_section(tmp_path) -> None:
     assert "Weekly Allowance Plans" in html
     assert "Default Week" in html
     assert "Current Week Override" in html
+    assert "Weekly Chore Builder" in html
+    assert "Save Weekly Chore Rule" in html
     assert "Saved Default Rules" in html
     assert "Saved Override Rules" in html
+    assert "Add Default Chore" not in html
+    assert "Add Override Chore" not in html
     assert "Toy pickup weekly" in html
     assert "Default Period" in html
     assert "Plan Details By Child" in html

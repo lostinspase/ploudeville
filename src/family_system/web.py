@@ -689,6 +689,20 @@ def _base_styles() -> str:
       line-height: 1.35;
     }
     .planner-form button { align-self: flex-start; }
+    .planner-split {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 12px;
+    }
+    @media (min-width: 930px) {
+      .planner-split { grid-template-columns: 1fr 1fr; }
+    }
+    .planner-pane {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      min-width: 0;
+    }
     .full-width-card { grid-column: 1 / -1; }
     .task-builder-form {
       display: flex;
@@ -2145,6 +2159,79 @@ def _parent_page(
             <button type="button" id="weekly-plan-clear">Show All Plans</button>
           </div>
           <div class="grid">{weekly_plan_detail_cards}</div>
+          <h4>Weekly Chore Builder</h4>
+          <p class="muted">Use one builder for both default chores and current-week override chores. Pick the scope first, then fill in the child, task, and schedule rule.</p>
+          <form method="post" action="/add-weekly-allowance-item" class="planner-form">
+            <div class="planner-split">
+              <div class="planner-pane">
+                <div class="planner-row">
+                  <div class="planner-field">
+                    <label for="weekly-chore-scope">Plan Scope</label>
+                    <select id="weekly-chore-scope" name="scope" required>
+                      <option value="default">Default Week</option>
+                      <option value="override">Current Week Override</option>
+                    </select>
+                    <small>Choose `Default Week` for the standing baseline or `Current Week Override` to change just one week.</small>
+                  </div>
+                  <div class="planner-field">
+                    <label for="weekly-chore-child">Child</label>
+                    <select id="weekly-chore-child" name="child_id" required>
+                      <option value="">Choose child</option>
+                      {''.join(f'<option value="{c["id"]}">{escape(str(c["name"]))}</option>' for c in children)}
+                    </select>
+                  </div>
+                </div>
+                <div class="planner-row">
+                  <div class="planner-field">
+                    <label for="weekly-chore-week">Week Key</label>
+                    <input id="weekly-chore-week" name="week_key" value="{current_week}" />
+                    <small>Used only for `Current Week Override`. Leave it as {current_week} unless you are editing a different ISO week.</small>
+                  </div>
+                  <div class="planner-field">
+                    <label for="weekly-chore-task">Required Chore</label>
+                    <select id="weekly-chore-task" name="task_id" required>
+                      <option value="">Choose required task</option>
+                      {''.join(f'<option value="{t["id"]}">{escape(str(t["name"]))}</option>' for t in tasks if str(t.get("rank")) == "required")}
+                    </select>
+                  </div>
+                </div>
+              </div>
+              <div class="planner-pane">
+                <div class="planner-row">
+                  <div class="planner-field">
+                    <label for="weekly-chore-period-mode">Schedule Rule</label>
+                    <select id="weekly-chore-period-mode" name="period_mode" required>
+                      <option value="day_of_week">Specific Day</option>
+                      <option value="all_days">All Days</option>
+                      <option value="times_per_period">Any Day In Period</option>
+                    </select>
+                    <small>`Specific Day` uses the day picker. `All Days` creates one deliverable per day. `Any Day In Period` uses a weekly completion count.</small>
+                  </div>
+                  <div class="planner-field">
+                    <label for="weekly-chore-day">Day Of Week</label>
+                    <select id="weekly-chore-day" name="day_of_week">
+                      <option value="">Choose day</option>
+                      {weekday_option_tags}
+                    </select>
+                    <small>Use this only for `Specific Day` rules.</small>
+                  </div>
+                </div>
+                <div class="planner-row">
+                  <div class="planner-field">
+                    <label for="weekly-chore-count">Times In Period</label>
+                    <input id="weekly-chore-count" type="number" name="times_per_period" min="1" max="7" value="1" />
+                    <small>Example: `2` means the chore can be completed any two times during the week.</small>
+                  </div>
+                  <div class="planner-field">
+                    <label for="weekly-chore-time">Due Time</label>
+                    <input id="weekly-chore-time" name="due_time" placeholder="HH:MM" />
+                    <small>Optional. Leave blank if the chore just needs to happen sometime that day.</small>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <button type="submit">Save Weekly Chore Rule</button>
+          </form>
           <div class="two-col">
             <div>
               <h4>Default Week</h4>
@@ -2155,57 +2242,6 @@ def _parent_page(
                 </select>
                 <input type="number" min="0" step="0.01" name="amount" placeholder="Weekly amount" required />
                 <button type="submit">Save Default Amount</button>
-              </form>
-              <form method="post" action="/add-weekly-allowance-item" class="planner-form">
-                <input type="hidden" name="scope" value="default" />
-                <div class="planner-row">
-                  <div class="planner-field">
-                    <label for="default-chore-child">Child</label>
-                    <select id="default-chore-child" name="child_id" required>
-                      <option value="">Choose child</option>
-                      {''.join(f'<option value="{c["id"]}">{escape(str(c["name"]))}</option>' for c in children)}
-                    </select>
-                  </div>
-                  <div class="planner-field">
-                    <label for="default-chore-task">Required Chore</label>
-                    <select id="default-chore-task" name="task_id" required>
-                      <option value="">Choose required task</option>
-                      {''.join(f'<option value="{t["id"]}">{escape(str(t["name"]))}</option>' for t in tasks if str(t.get("rank")) == "required")}
-                    </select>
-                  </div>
-                </div>
-                <div class="planner-row">
-                  <div class="planner-field">
-                    <label for="default-chore-period-mode">Schedule Rule</label>
-                    <select id="default-chore-period-mode" name="period_mode" required>
-                      <option value="day_of_week">Specific Day</option>
-                      <option value="all_days">All Days</option>
-                      <option value="times_per_period">Any Day In Period</option>
-                    </select>
-                    <small>`Specific Day` uses the day picker below. `All Days` creates one chore for each day. `Any Day In Period` lets you pick how many times it must be done during the week.</small>
-                  </div>
-                  <div class="planner-field">
-                    <label for="default-chore-day">Day Of Week</label>
-                    <select id="default-chore-day" name="day_of_week">
-                      <option value="">Choose day</option>
-                      {weekday_option_tags}
-                    </select>
-                    <small>Use this only for `Specific Day` chores.</small>
-                  </div>
-                  <div class="planner-field">
-                    <label for="default-chore-count">Times In Period</label>
-                    <input id="default-chore-count" type="number" name="times_per_period" min="1" max="7" value="1" />
-                    <small>Use this for `Any Day In Period`. Example: `2` means the chore must be completed twice sometime during the week.</small>
-                  </div>
-                </div>
-                <div class="planner-row">
-                  <div class="planner-field">
-                    <label for="default-chore-time">Due Time</label>
-                    <input id="default-chore-time" name="due_time" placeholder="HH:MM" />
-                    <small>Optional. Leave blank if the chore just needs to be done sometime that day.</small>
-                  </div>
-                </div>
-                <button type="submit">Add Default Chore</button>
               </form>
               <h5>Saved Default Rules</h5>
               <p class="muted">These are the default weekly chores and allowance settings currently saved for each child.</p>
@@ -2230,62 +2266,6 @@ def _parent_page(
                 <input name="week_key" value="{current_week}" required />
                 <input type="number" min="0" step="0.01" name="amount" placeholder="Override amount" required />
                 <button type="submit">Save Override Amount</button>
-              </form>
-              <form method="post" action="/add-weekly-allowance-item" class="planner-form">
-                <input type="hidden" name="scope" value="override" />
-                <div class="planner-row">
-                  <div class="planner-field">
-                    <label for="override-chore-child">Child</label>
-                    <select id="override-chore-child" name="child_id" required>
-                      <option value="">Choose child</option>
-                      {''.join(f'<option value="{c["id"]}">{escape(str(c["name"]))}</option>' for c in children)}
-                    </select>
-                  </div>
-                  <div class="planner-field">
-                    <label for="override-chore-week">Week Key</label>
-                    <input id="override-chore-week" name="week_key" value="{current_week}" required />
-                    <small>ISO week format, like {current_week}.</small>
-                  </div>
-                </div>
-                <div class="planner-row">
-                  <div class="planner-field">
-                    <label for="override-chore-task">Override Chore</label>
-                    <select id="override-chore-task" name="task_id" required>
-                      <option value="">Choose required task</option>
-                      {''.join(f'<option value="{t["id"]}">{escape(str(t["name"]))}</option>' for t in tasks if str(t.get("rank")) == "required")}
-                    </select>
-                  </div>
-                  <div class="planner-field">
-                    <label for="override-chore-period-mode">Schedule Rule</label>
-                    <select id="override-chore-period-mode" name="period_mode" required>
-                      <option value="day_of_week">Specific Day</option>
-                      <option value="all_days">All Days</option>
-                      <option value="times_per_period">Any Day In Period</option>
-                    </select>
-                    <small>Use `All Days` for chores like daily reading. Use `Any Day In Period` for chores that only need a weekly count.</small>
-                  </div>
-                  <div class="planner-field">
-                    <label for="override-chore-day">Day Of Week</label>
-                    <select id="override-chore-day" name="day_of_week">
-                      <option value="">Choose day</option>
-                      {weekday_option_tags}
-                    </select>
-                    <small>Use this only for `Specific Day` override chores.</small>
-                  </div>
-                  <div class="planner-field">
-                    <label for="override-chore-count">Times In Period</label>
-                    <input id="override-chore-count" type="number" name="times_per_period" min="1" max="7" value="1" />
-                    <small>Example: `2` means the child can do the task any two times in that week.</small>
-                  </div>
-                </div>
-                <div class="planner-row">
-                  <div class="planner-field">
-                    <label for="override-chore-time">Due Time</label>
-                    <input id="override-chore-time" name="due_time" placeholder="HH:MM" />
-                    <small>Optional.</small>
-                  </div>
-                </div>
-                <button type="submit">Add Override Chore</button>
               </form>
               <h5>Saved Override Rules</h5>
               <p class="muted">These rules replace the default plan for the selected current week when an override is active.</p>
