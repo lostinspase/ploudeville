@@ -639,6 +639,25 @@ def _base_styles() -> str:
     @media (min-width: 930px) { .two-col { grid-template-columns: 1.15fr 0.85fr; } }
     .parent-shell { display: flex; flex-direction: column; gap: 12px; }
     .parent-header-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+    .period-banner {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px 16px;
+      margin-top: 10px;
+      padding: 12px 14px;
+      border: 1px solid #d9c899;
+      border-radius: 16px;
+      background: linear-gradient(180deg, rgba(255, 248, 229, 0.98), rgba(248, 239, 208, 0.96));
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.75);
+    }
+    .period-banner strong {
+      font-size: 15px;
+      letter-spacing: 0.02em;
+    }
+    .period-banner .muted {
+      font-size: 14px;
+    }
     .tabbar {
       display: flex; gap: 8px; flex-wrap: wrap; padding: 8px;
       background: rgba(255, 250, 239, 0.88); border: 1px solid #e7d9b8; border-radius: 14px;
@@ -702,6 +721,27 @@ def _base_styles() -> str:
       flex-direction: column;
       gap: 10px;
       min-width: 0;
+    }
+    .section-stack {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    .section-panel {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      padding: 14px;
+      border: 1px solid #ead9b4;
+      border-radius: 16px;
+      background:
+        linear-gradient(180deg, rgba(255, 252, 243, 0.98), rgba(255, 248, 233, 0.96));
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.85);
+    }
+    .section-panel > h4,
+    .section-panel > h5,
+    .section-panel > p {
+      margin: 0;
     }
     .full-width-card { grid-column: 1 / -1; }
     .task-builder-form {
@@ -786,6 +826,10 @@ def _layout(title: str, body: str, message: str = "") -> str:
       </body>
     </html>
     """
+
+
+def _friendly_date_label(value: date) -> str:
+    return f"{value.strftime('%b')} {value.day}, {value.year}"
 
 
 def _get_form_data(environ: Environ) -> dict[str, str]:
@@ -1437,6 +1481,10 @@ def _parent_page(
     weekly_plan_items = list_weekly_allowance_plan_items(include_inactive=include_inactive)
     balances = list_balances()
     current_week = current_week_key()
+    current_week_year_text, current_week_number_text = current_week.split("-W", 1)
+    current_period_start = date.fromisocalendar(int(current_week_year_text), int(current_week_number_text), 1)
+    current_period_end = current_period_start + timedelta(days=6)
+    current_period_label = f"{_friendly_date_label(current_period_start)} to {_friendly_date_label(current_period_end)}"
     preset = interest_preset.strip().lower()
     interest_from_value = interest_date_from.strip()
     interest_to_value = interest_date_to.strip()
@@ -2092,6 +2140,11 @@ def _parent_page(
         <div>
           <h2>Parent Panel</h2>
           {"<p class='msg'>Parent birthday today: " + ", ".join(escape(str(p["name"])) for p in parent_birthdays) + "</p>" if parent_birthdays else ""}
+          <div class="period-banner">
+            <strong>Current Period</strong>
+            <span>{escape(current_week)}</span>
+            <span class="muted">{escape(current_period_label)}</span>
+          </div>
         </div>
         <form method="post" action="/parent-logout"><button type="submit">Sign Out</button></form>
       </div>
@@ -2149,9 +2202,13 @@ def _parent_page(
         <div class="card">
           <h3>Weekly Allowance Plans</h3>
           <p class="muted">Set a weekly allowance amount per child, define the default weekly chore baseline, and optionally override the current week. Weekly-plan chores do not pay per task; the allowance is credited once the effective week plan is fully approved.</p>
+          <div class="section-stack">
+          <div class="section-panel">
           <h4>Current Week Status ({current_week})</h4>
           <table><thead><tr><th>Child</th><th>Week</th><th>Source</th><th>Default Period</th><th>Progress</th><th>Allowance</th><th>Credited</th><th>Details</th></tr></thead>
           <tbody>{weekly_status_rows if weekly_status_rows else '<tr><td colspan="8">No weekly allowance plans yet.</td></tr>'}</tbody></table>
+          </div>
+          <div class="section-panel">
           <h4 id="weekly-plan-details">Plan Details By Child</h4>
           <p class="muted">Use the links in the status table to jump to a child plan below. Each child card shows the saved default period, a quick default amount editor, and the effective deliverables for the current week.</p>
           <div class="msg weekly-plan-selection" id="weekly-plan-selection">
@@ -2159,6 +2216,8 @@ def _parent_page(
             <button type="button" id="weekly-plan-clear">Show All Plans</button>
           </div>
           <div class="grid">{weekly_plan_detail_cards}</div>
+          </div>
+          <div class="section-panel">
           <h4>Weekly Chore Builder</h4>
           <p class="muted">Use one builder for both default chores and current-week override chores. Pick the scope first, then fill in the child, task, and schedule rule.</p>
           <form method="post" action="/add-weekly-allowance-item" class="planner-form">
@@ -2232,9 +2291,11 @@ def _parent_page(
             </div>
             <button type="submit">Save Weekly Chore Rule</button>
           </form>
+          </div>
           <div class="two-col">
-            <div>
+            <div class="section-panel">
               <h4>Default Week</h4>
+              <p class="muted">Baseline weekly allowance amount and rules used unless the current week is explicitly overridden.</p>
               <form method="post" action="/set-weekly-allowance-default">
                 <select name="child_id" required>
                   <option value="">Child</option>
@@ -2248,8 +2309,9 @@ def _parent_page(
               <table><thead><tr><th>Child</th><th>Amount</th><th>Task</th><th>Schedule</th><th>Due</th><th>Action</th></tr></thead>
               <tbody>{weekly_default_rows if weekly_default_rows else '<tr><td colspan="6">No default-week chores yet.</td></tr>'}</tbody></table>
             </div>
-            <div>
+            <div class="section-panel">
               <h4>Current Week Override</h4>
+              <p class="muted">Use this section only when one week needs a different allowance amount or a different chore mix than the default plan.</p>
               <form method="post" action="/clone-weekly-allowance-override">
                 <select name="child_id" required>
                   <option value="">Child</option>
@@ -2272,6 +2334,7 @@ def _parent_page(
               <table><thead><tr><th>Child</th><th>Week</th><th>Amount</th><th>Task</th><th>Schedule</th><th>Due</th><th>Action</th></tr></thead>
               <tbody>{weekly_override_rows if weekly_override_rows else '<tr><td colspan="7">No current-week override chores yet.</td></tr>'}</tbody></table>
             </div>
+          </div>
           </div>
         </div>
 

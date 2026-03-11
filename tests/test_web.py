@@ -402,6 +402,9 @@ def test_parent_page_shows_weekly_allowance_section(tmp_path) -> None:
     assert status.startswith("200")
     html = content.decode("utf-8")
     assert "Weekly Allowance Plans" in html
+    assert "Current Period" in html
+    assert "2026-W11" in html
+    assert "Mar 9, 2026 to Mar 15, 2026" in html
     assert "Default Week" in html
     assert "Current Week Override" in html
     assert "Weekly Chore Builder" in html
