@@ -764,6 +764,9 @@ def test_home_page_shows_child_house_rules_and_reminders(tmp_path) -> None:
     status, content = _invoke_app("/")
     assert status.startswith("200")
     html = content.decode("utf-8")
+    assert "Current Period" in html
+    assert "2026-W11" in html
+    assert "Mar 9, 2026 to Mar 15, 2026" in html
     assert "After School Reminders" in html
     assert "homework, practice voice, practice piano, exercise, read" in html
     assert "Sun-Thu: screen off 20:15, bedtime 21:00" in html

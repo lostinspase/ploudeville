@@ -868,6 +868,11 @@ def _home_page(msg: str = "") -> tuple[str, list[tuple[str, str]], bytes]:
     daily_interest_rate = get_wallet_daily_interest_rate_percent()
     family_interest_total = total_interest_earned()
     birthday_names = [str(c["name"]) for c in list_today_birthdays()]
+    current_week = current_week_key()
+    current_week_year_text, current_week_number_text = current_week.split("-W", 1)
+    current_period_start = date.fromisocalendar(int(current_week_year_text), int(current_week_number_text), 1)
+    current_period_end = current_period_start + timedelta(days=6)
+    current_period_label = f"{_friendly_date_label(current_period_start)} to {_friendly_date_label(current_period_end)}"
     cards = []
     schedule_cards = []
     for child in children:
@@ -919,7 +924,10 @@ def _home_page(msg: str = "") -> tuple[str, list[tuple[str, str]], bytes]:
         f"<div class='card'><h3>Message of the Day</h3><p class='muted truncate' title=\"{escape(str(motd['message_text'])) if motd else 'No message set for today.'}\">{escape(str(motd['message_text'])) if motd else 'No message set for today.'}</p></div>"
         f"<div class='card'><h3>Fun Fact of the Day</h3><p class='muted truncate' title=\"{escape(str(fun_fact['fact_text'])) if fun_fact else 'No fun fact set for today.'}\">{escape(str(fun_fact['fact_text'])) if fun_fact else 'No fun fact set for today.'}</p></div>"
         f"</div>"
+        f"<div class='motd-row'>"
+        f"<div class='card'><h3>Current Period</h3><p class='muted'>{escape(current_week)}</p><p class='muted'>{escape(current_period_label)}</p></div>"
         f"<div class='card'><h3>After School Reminders</h3><p class='muted'>{', '.join(escape(r) for r in reminders) if reminders else 'No reminders set.'}</p></div>"
+        f"</div>"
         f"<h2>Choose a Child Portal</h2>"
         f"<p class='muted'>Daily wallet interest rate: {daily_interest_rate:.4f}% | Total interest earned: ${family_interest_total:.2f}</p>"
         f"<p class='muted'>Total pets adopted in system: {total_adoptions}</p>"
