@@ -672,7 +672,7 @@ def _base_styles() -> str:
       color: #fff;
       box-shadow: 0 5px 14px rgba(18, 110, 97, 0.22);
     }
-    .parent-panel-column { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+    .parent-panel-column, .child-panel-column { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
     .planner-form {
       display: flex;
       flex-direction: column;
@@ -1200,14 +1200,30 @@ def _child_page(child_id: int, msg: str = "") -> tuple[str, list[tuple[str, str]
     )
 
     body = f"""
-    <section class="two-col">
-      <div>
-        <h2>{escape(str(child['name']))}'s Portal</h2>
-        {birthday_note}
-        <p class="muted">Allowance ${balances['allowance']:.2f} | Screen {balances['screen_time']:.0f} min | Points {balances['points']:.0f}</p>
-        <p class="muted">Screen allotment today: {screen_allot_today} min</p>
+    <section class="parent-shell">
+      <div class="parent-header-row">
+        <div>
+          <h2>{escape(str(child['name']))}'s Portal</h2>
+          {birthday_note}
+          <p class="muted">Allowance ${balances['allowance']:.2f} | Screen {balances['screen_time']:.0f} min | Points {balances['points']:.0f}</p>
+          <p class="muted">Screen allotment today: {screen_allot_today} min</p>
+        </div>
+        <form method="post" action="/child-logout"><input type="hidden" name="child_id" value="{child_id}" /><button type="submit">Lock Portal</button></form>
+      </div>
 
-        <div class="card">
+      <div class="tabbar" id="child-tabbar" aria-label="Child portal sections">
+        <button type="button" data-view="work">Work Check-In</button>
+        <button type="button" data-view="money">Rewards &amp; Wallet</button>
+        <button type="button" data-view="reading">Reading</button>
+        <button type="button" data-view="messages">Messages</button>
+        <button type="button" data-view="goals">Goals &amp; Service</button>
+        <button type="button" data-view="pets">Pets</button>
+        <button type="button" data-view="apps">Screen &amp; Apps</button>
+      </div>
+
+      <section class="two-col child-panel">
+      <div class="child-panel-column">
+        <div class="card" data-child-view="pets">
           <h3>Pet Center ({pet_info['week_key']})</h3>
           <p class="muted">Current: {escape(str(pet_name))} the {escape(str(pet_species_name))} ({escape(str(pet_info['health']))})</p>
           <p class="muted">Required tasks this week: {pet_info['required_completed']} / {pet_info['required_minimum']}</p>
@@ -1266,14 +1282,14 @@ def _child_page(child_id: int, msg: str = "") -> tuple[str, list[tuple[str, str]
           </table>
         </div>
 
-        <div class="card">
+        <div class="card" data-child-view="work">
           <h3>Weekly Allowance ({weekly_allowance['week_key']})</h3>
           <p class="muted">Plan source: {escape(str(weekly_allowance['plan_source']))} | Progress: {weekly_allowance['approved_count']} / {weekly_allowance['total_planned']} chores</p>
           <p class="muted">Weekly allowance: ${float(weekly_allowance['allowance_amount']):.2f} | Credited: {'yes' if weekly_allowance['credited'] else 'not yet'}</p>
           <p class="muted">Default amount: ${float(weekly_allowance['default_amount']):.2f}{'' if weekly_allowance['override_amount'] is None else f" | Override amount: ${float(weekly_allowance['override_amount']):.2f}"}</p>
         </div>
 
-        <div class="card">
+        <div class="card" data-child-view="work">
           <h3>Due Tasks</h3>
           <table>
             <thead><tr><th>Task</th><th>Due Date</th><th>Status</th><th>Action</th></tr></thead>
@@ -1281,7 +1297,7 @@ def _child_page(child_id: int, msg: str = "") -> tuple[str, list[tuple[str, str]
           </table>
         </div>
 
-        <div class="card">
+        <div class="card" data-child-view="work">
           <h3>Pending Reviews</h3>
           <table>
             <thead><tr><th>ID</th><th>Task</th><th>Due Date</th><th>Status</th></tr></thead>
@@ -1290,8 +1306,8 @@ def _child_page(child_id: int, msg: str = "") -> tuple[str, list[tuple[str, str]
         </div>
       </div>
 
-      <div>
-        <div class="card">
+      <div class="child-panel-column">
+        <div class="card" data-child-view="money">
           <h3>Redeem Reward</h3>
           <form method="post" action="/redeem-reward">
             <input type="hidden" name="child_id" value="{child_id}" />
@@ -1304,7 +1320,7 @@ def _child_page(child_id: int, msg: str = "") -> tuple[str, list[tuple[str, str]
           </form>
         </div>
 
-        <div class="card">
+        <div class="card" data-child-view="money">
           <h3>Wallet</h3>
           <p class="muted">Available allowance for payout: ${available_allowance:.2f}</p>
           <p class="muted">Create a payout request and a parent can mark it sent to Apple Cash.</p>
@@ -1320,7 +1336,7 @@ def _child_page(child_id: int, msg: str = "") -> tuple[str, list[tuple[str, str]
           </table>
         </div>
 
-        <div class="card">
+        <div class="card" data-child-view="goals">
           <h3>Service Hours</h3>
           <p class="muted">Lifetime completed service hours: {service_hours_total:.2f}</p>
           <form method="post" action="/submit-service-hours">
@@ -1348,7 +1364,7 @@ def _child_page(child_id: int, msg: str = "") -> tuple[str, list[tuple[str, str]
           </table>
         </div>
 
-        <div class="card">
+        <div class="card" data-child-view="money">
           <h3>Rewards Catalog</h3>
           <table>
             <thead><tr><th>Reward</th><th>Type</th><th>Cost</th></tr></thead>
@@ -1356,7 +1372,7 @@ def _child_page(child_id: int, msg: str = "") -> tuple[str, list[tuple[str, str]
           </table>
         </div>
 
-        <div class="card">
+        <div class="card" data-child-view="apps">
           <h3>App Time Limits</h3>
           <table>
             <thead><tr><th>App</th><th>Limit</th></tr></thead>
@@ -1364,7 +1380,7 @@ def _child_page(child_id: int, msg: str = "") -> tuple[str, list[tuple[str, str]
           </table>
         </div>
 
-        <div class="card">
+        <div class="card" data-child-view="goals">
           <h3>Concert Rewards (80/20)</h3>
           <p class="muted">If you save 80% of the low ticket price, parents cover 20%.</p>
           <table>
@@ -1373,7 +1389,7 @@ def _child_page(child_id: int, msg: str = "") -> tuple[str, list[tuple[str, str]
           </table>
         </div>
 
-        <div class="card">
+        <div class="card" data-child-view="goals">
           <h3>Adventure Parks (80/20)</h3>
           <p class="muted">Save 80% of the low ticket price and parents cover 20%.</p>
           <table>
@@ -1382,7 +1398,7 @@ def _child_page(child_id: int, msg: str = "") -> tuple[str, list[tuple[str, str]
           </table>
         </div>
 
-        <div class="card">
+        <div class="card" data-child-view="reading">
           <h3>Reading Log + Quiz</h3>
           <p class="muted">Log your reading, answer 2 questions, and pass to earn reading task credit.</p>
           <form method="post" action="/submit-reading-log">
@@ -1402,7 +1418,7 @@ def _child_page(child_id: int, msg: str = "") -> tuple[str, list[tuple[str, str]
           </table>
         </div>
 
-        <div class="card">
+        <div class="card" data-child-view="money">
           <h3>Charity &amp; Donations</h3>
           <p class="muted">Donations are completed by parents and deducted from your allowance balance when marked complete.</p>
           <h4>Charity List</h4>
@@ -1433,7 +1449,7 @@ def _child_page(child_id: int, msg: str = "") -> tuple[str, list[tuple[str, str]
           </table>
         </div>
 
-        <div class="card">
+        <div class="card" data-child-view="messages">
           <h3>Messages</h3>
           <table>
             <thead><tr><th>When</th><th>From</th><th>Message</th></tr></thead>
@@ -1447,17 +1463,52 @@ def _child_page(child_id: int, msg: str = "") -> tuple[str, list[tuple[str, str]
             <button type="submit">Send</button>
           </form>
         </div>
-
-        <form method="post" action="/child-logout"><input type="hidden" name="child_id" value="{child_id}" /><button type="submit">Lock Portal</button></form>
       </div>
-    </section>
-    <section class="card">
+      </section>
+    <section class="card" data-child-view="work">
       <h2><strong>Today's Schedule</strong></h2>
       <table>
         <thead><tr><th>Start</th><th>Activity</th><th>End</th><th>Type</th></tr></thead>
         <tbody>{activity_rows if activity_rows else '<tr><td colspan="4">No activities scheduled for today.</td></tr>'}</tbody>
       </table>
     </section>
+    </section>
+    <script>
+      (function() {{
+        const tabbar = document.getElementById("child-tabbar");
+        const panel = document.querySelector(".child-panel");
+        if (!tabbar || !panel) return;
+        const buttons = Array.from(tabbar.querySelectorAll("button[data-view]"));
+        const cards = Array.from(document.querySelectorAll("[data-child-view]"));
+        const columns = Array.from(panel.querySelectorAll(".child-panel-column"));
+        const storageKey = "child-portal-tab-{child_id}";
+        const apply = (view) => {{
+          buttons.forEach((button) => {{
+            button.classList.toggle("active", button.dataset.view === view);
+            button.setAttribute("aria-pressed", button.dataset.view === view ? "true" : "false");
+          }});
+          cards.forEach((card) => {{
+            card.style.display = card.getAttribute("data-child-view") === view ? "" : "none";
+          }});
+          columns.forEach((column) => {{
+            const hasVisible = Array.from(column.querySelectorAll("[data-child-view]")).some((card) => card.style.display !== "none");
+            column.style.display = hasVisible ? "" : "none";
+          }});
+          panel.style.gridTemplateColumns =
+            columns.filter((column) => column.style.display !== "none").length <= 1 ? "1fr" : "";
+          try {{ localStorage.setItem(storageKey, view); }} catch (err) {{}}
+        }};
+        let initial = "work";
+        try {{
+          const saved = localStorage.getItem(storageKey);
+          if (saved && buttons.some((button) => button.dataset.view === saved)) initial = saved;
+        }} catch (err) {{}}
+        apply(initial);
+        buttons.forEach((button) => {{
+          button.addEventListener("click", () => apply(button.dataset.view || "work"));
+        }});
+      }})();
+    </script>
     """
     return _html_response(_layout(f"{child['name']} Portal", body, msg))
 

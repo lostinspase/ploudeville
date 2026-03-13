@@ -958,6 +958,23 @@ def test_child_portal_shows_app_time_limits(tmp_path) -> None:
     assert "Roblox" in html
 
 
+def test_child_portal_shows_tab_navigation(tmp_path) -> None:
+    db.DATA_DIR = tmp_path
+    db.DB_PATH = tmp_path / "test_family.db"
+    db.init_db()
+    child_id = add_or_update_child("Elliana", 10)
+    set_child_pin(child_id, "1234")
+
+    cookie = f"{web.COOKIE_NAME}={child_id}:{web._sign_child(child_id)}"
+    status, content = _invoke_app(f"/child?child_id={child_id}", cookie=cookie)
+    assert status.startswith("200")
+    html = content.decode("utf-8")
+    assert "child-tabbar" in html
+    assert "Work Check-In" in html
+    assert "Rewards &amp; Wallet" in html
+    assert 'data-child-view="work"' in html
+
+
 def test_concert_goal_progress_uses_80_20_split(tmp_path) -> None:
     db.DATA_DIR = tmp_path
     db.DB_PATH = tmp_path / "test_family.db"
