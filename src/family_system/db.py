@@ -433,6 +433,8 @@ def init_db() -> None:
                 chatbot_provider TEXT NOT NULL DEFAULT '',
                 parent_override_by TEXT,
                 parent_override_at TEXT,
+                linked_task_completion_id INTEGER REFERENCES task_completions(id),
+                linked_task_instance_id INTEGER REFERENCES task_instances(id),
                 credit_completion_id INTEGER REFERENCES task_completions(id),
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
                 evaluated_at TEXT
@@ -684,6 +686,10 @@ def init_db() -> None:
             conn.execute("ALTER TABLE reading_logs ADD COLUMN parent_override_by TEXT")
         if not _column_exists(conn, "reading_logs", "parent_override_at"):
             conn.execute("ALTER TABLE reading_logs ADD COLUMN parent_override_at TEXT")
+        if not _column_exists(conn, "reading_logs", "linked_task_completion_id"):
+            conn.execute("ALTER TABLE reading_logs ADD COLUMN linked_task_completion_id INTEGER REFERENCES task_completions(id)")
+        if not _column_exists(conn, "reading_logs", "linked_task_instance_id"):
+            conn.execute("ALTER TABLE reading_logs ADD COLUMN linked_task_instance_id INTEGER REFERENCES task_instances(id)")
 
         conn.executemany(
             """

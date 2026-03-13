@@ -71,9 +71,11 @@ from .repository import (
     get_reading_log,
     list_reading_logs,
     set_reading_log_questions,
+    update_reading_log_details,
     update_reading_log_quiz_result,
     award_reading_log_credit,
     parent_override_reading_credit,
+    ensure_reading_log_for_task_completion,
     total_completed_donations,
     list_pet_species,
     list_parents,
@@ -1154,30 +1156,94 @@ def _child_page(child_id: int, msg: str = "") -> tuple[str, list[tuple[str, str]
         )
         for ag in adventure_goals
     )
-    reading_rows = "".join(
-        (
+    def _reading_time_label(row: dict) -> str:
+        start = str(row.get("start_time") or "").strip()
+        end = str(row.get("end_time") or "").strip()
+        if start and end:
+            return f"{start}-{end}"
+        return "-"
+
+    reading_row_parts: list[str] = []
+    for r in reading_logs:
+        title = str(r.get("book_title") or "").strip()
+        chapters_text = str(r.get("chapters") or "").strip()
+        start = str(r.get("start_time") or "").strip()
+        end = str(r.get("end_time") or "").strip()
+        needs_details = not all((title, chapters_text, start, end))
+        status_label = "needs_details" if needs_details else str(r.get("status") or "")
+        action_bits: list[str] = []
+        if needs_details:
+            action_bits.append("<strong>Finish details below</strong>")
+        elif str(r.get("status")) in ("awaiting_answers", "failed"):
+            action_bits.append("Answer quiz below")
+        elif r.get("credit_completion_id"):
+            action_bits.append(f"Credit #{int(r['credit_completion_id'])}")
+        elif r.get("linked_task_completion_id"):
+            action_bits.append("Waiting for parent review")
+        else:
+            action_bits.append("-")
+        reading_row_parts.append(
             f"<tr><td>{escape(str(r['read_date']))}</td>"
-            f"<td>{escape(str(r['book_title']))}</td>"
-            f"<td>{escape(str(r['chapters']))}</td>"
-            f"<td>{escape(str(r['start_time']))}-{escape(str(r['end_time']))}</td>"
-            f"<td>{escape(str(r['status']))}</td>"
-            f"<td>{'yes' if int(r.get('passed') or 0) else 'no'}</td></tr>"
+            f"<td>{escape(title or 'Reading task check-in')}</td>"
+            f"<td>{escape(chapters_text or '-')}</td>"
+            f"<td>{escape(_reading_time_label(r))}</td>"
+            f"<td>{escape(status_label)}</td>"
+            f"<td>{'yes' if int(r.get('passed') or 0) else 'no'}</td>"
+            f"<td>{' | '.join(action_bits)}</td></tr>"
         )
-        for r in reading_logs
+        if needs_details:
+            reading_row_parts.append(
+                "<tr><td colspan='7'>"
+                "<form method='post' action='/submit-reading-log' class='planner-form'>"
+                f"<input type='hidden' name='child_id' value='{child_id}' />"
+                f"<input type='hidden' name='log_id' value='{int(r['id'])}' />"
+                "<div class='planner-row'>"
+                f"<div class='planner-field'><label>Date Read</label><input type='date' name='read_date' value='{escape(str(r['read_date']))}' required /></div>"
+                f"<div class='planner-field'><label>Start Time</label><input type='time' name='start_time' value='{escape(start)}' required /></div>"
+                f"<div class='planner-field'><label>End Time</label><input type='time' name='end_time' value='{escape(end)}' required /></div>"
+                "</div>"
+                "<div class='planner-row'>"
+                f"<div class='planner-field'><label>Book Title</label><input name='book_title' value='{escape(title)}' placeholder='Book title' required /></div>"
+                f"<div class='planner-field'><label>What You Read</label><input name='chapters' value='{escape(chapters_text)}' placeholder='Chapters/pages (ex: 4-6)' required /></div>"
+                "</div>"
+                "<button type='submit'>Save Details + Get Quiz</button>"
+                "</form>"
+                "</td></tr>"
+            )
+        elif str(r.get("status")) in ("awaiting_answers", "failed"):
+            reading_row_parts.append(
+                "<tr><td colspan='7'>"
+                "<form method='post' action='/answer-reading-quiz' class='planner-form'>"
+                f"<input type='hidden' name='child_id' value='{child_id}' />"
+                f"<input type='hidden' name='log_id' value='{int(r['id'])}' />"
+                f"<p><strong>Q1:</strong> {escape(str(r.get('question_1') or ''))}</p>"
+                f"<input name='answer_1' placeholder='Answer question 1' value='{escape(str(r.get('answer_1') or ''))}' required />"
+                f"<p><strong>Q2:</strong> {escape(str(r.get('question_2') or ''))}</p>"
+                f"<input name='answer_2' placeholder='Answer question 2' value='{escape(str(r.get('answer_2') or ''))}' required />"
+                "<button type='submit'>Submit Quiz Answers</button>"
+                "</form>"
+                "</td></tr>"
+            )
+    pending_quiz = next(
+        (
+            r
+            for r in reading_logs
+            if str(r.get("status")) in ("awaiting_answers", "failed")
+            and all(
+                (
+                    str(r.get("book_title") or "").strip(),
+                    str(r.get("chapters") or "").strip(),
+                    str(r.get("start_time") or "").strip(),
+                    str(r.get("end_time") or "").strip(),
+                )
+            )
+        ),
+        None,
     )
-    pending_quiz = next((r for r in reading_logs if str(r.get("status")) in ("awaiting_answers", "failed")), None)
-    reading_rows_html = reading_rows if reading_rows else '<tr><td colspan="6">No reading logs yet.</td></tr>'
+    reading_rows_html = "".join(reading_row_parts) if reading_row_parts else '<tr><td colspan="7">No reading logs yet.</td></tr>'
     pending_quiz_html = (
         (
-            "<form method='post' action='/answer-reading-quiz'>"
-            f"<input type='hidden' name='child_id' value='{child_id}' />"
-            f"<input type='hidden' name='log_id' value='{pending_quiz['id']}' />"
-            f"<p><strong>Q1:</strong> {escape(str(pending_quiz['question_1']))}</p>"
-            "<input name='answer_1' placeholder='Answer question 1' required style='min-width:420px;' />"
-            f"<p><strong>Q2:</strong> {escape(str(pending_quiz['question_2']))}</p>"
-            "<input name='answer_2' placeholder='Answer question 2' required style='min-width:420px;' />"
-            "<button type='submit'>Submit Quiz Answers</button>"
-            "</form>"
+            f"<p class='muted'>A reading quiz is ready for <strong>{escape(str(pending_quiz.get('book_title') or 'your reading check-in'))}</strong>. Use the editable row below to submit the answers and earn automatic credit.</p>"
         )
         if pending_quiz
         else "<p class='muted'>No pending reading quiz right now.</p>"
@@ -1400,7 +1466,7 @@ def _child_page(child_id: int, msg: str = "") -> tuple[str, list[tuple[str, str]
 
         <div class="card" data-child-view="reading">
           <h3>Reading Log + Quiz</h3>
-          <p class="muted">Log your reading, answer 2 questions, and pass to earn reading task credit.</p>
+          <p class="muted">Log your reading, answer 2 questions, and pass to earn reading task credit. Reading task check-ins also show up here so you can finish the details and quiz from the same tab.</p>
           <form method="post" action="/submit-reading-log">
             <input type="hidden" name="child_id" value="{child_id}" />
             <input type="date" name="read_date" value="{date.today().isoformat()}" required />
@@ -1413,7 +1479,7 @@ def _child_page(child_id: int, msg: str = "") -> tuple[str, list[tuple[str, str]
           {pending_quiz_html}
           <h4>Recent Reading Logs</h4>
           <table>
-            <thead><tr><th>Date</th><th>Book</th><th>Chapters</th><th>Time</th><th>Status</th><th>Passed</th></tr></thead>
+            <thead><tr><th>Date</th><th>Book</th><th>Chapters</th><th>Time</th><th>Status</th><th>Passed</th><th>Action</th></tr></thead>
             <tbody>{reading_rows_html}</tbody>
           </table>
         </div>
@@ -3453,20 +3519,41 @@ def create_app() -> Callable:
                 child_id = int(form.get("child_id", "0"))
                 if not _is_child_authed(environ, child_id):
                     raise ValueError("Session expired. Please login again.")
-                submit_task_instance(int(form.get("instance_id", "0")), form.get("note", ""))
-                result = _redirect(f"/child?{urlencode({'child_id': child_id, 'msg': 'Task submitted for review'})}")
+                completion_id = submit_task_instance(int(form.get("instance_id", "0")), form.get("note", ""))
+                reading_log_id = ensure_reading_log_for_task_completion(completion_id)
+                if reading_log_id:
+                    result = _redirect(
+                        f"/child?{urlencode({'child_id': child_id, 'msg': 'Reading check-in saved. Open the Reading tab to finish the log and quiz for automatic credit.'})}"
+                    )
+                else:
+                    result = _redirect(f"/child?{urlencode({'child_id': child_id, 'msg': 'Task submitted for review'})}")
             elif method == "POST" and path == "/submit-reading-log":
                 child_id = int(form.get("child_id", "0"))
                 if not _is_child_authed(environ, child_id):
                     raise ValueError("Session expired. Please login again.")
-                log_id = create_reading_log(
-                    child_id=child_id,
-                    read_date=form.get("read_date", ""),
-                    start_time=form.get("start_time", ""),
-                    end_time=form.get("end_time", ""),
-                    book_title=form.get("book_title", ""),
-                    chapters=form.get("chapters", ""),
-                )
+                log_id_text = str(form.get("log_id", "")).strip()
+                if log_id_text.isdigit() and int(log_id_text) > 0:
+                    log_id = int(log_id_text)
+                    updated = update_reading_log_details(
+                        log_id=log_id,
+                        child_id=child_id,
+                        read_date=form.get("read_date", ""),
+                        start_time=form.get("start_time", ""),
+                        end_time=form.get("end_time", ""),
+                        book_title=form.get("book_title", ""),
+                        chapters=form.get("chapters", ""),
+                    )
+                    if not updated:
+                        raise ValueError("Reading log could not be updated")
+                else:
+                    log_id = create_reading_log(
+                        child_id=child_id,
+                        read_date=form.get("read_date", ""),
+                        start_time=form.get("start_time", ""),
+                        end_time=form.get("end_time", ""),
+                        book_title=form.get("book_title", ""),
+                        chapters=form.get("chapters", ""),
+                    )
                 log = get_reading_log(log_id)
                 if not log:
                     raise ValueError("Failed to load reading log")

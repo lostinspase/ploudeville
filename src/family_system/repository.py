@@ -1395,6 +1395,8 @@ def create_reading_log(
     end_time: str,
     book_title: str,
     chapters: str,
+    linked_task_completion_id: int | None = None,
+    linked_task_instance_id: int | None = None,
 ) -> int:
     day = _as_date(read_date).isoformat()
     start = _as_hhmm(start_time)
@@ -1411,11 +1413,28 @@ def create_reading_log(
         cursor = conn.execute(
             """
             INSERT INTO reading_logs (
-                child_id, read_date, start_time, end_time, book_title, chapters, status
+                child_id,
+                read_date,
+                start_time,
+                end_time,
+                book_title,
+                chapters,
+                status,
+                linked_task_completion_id,
+                linked_task_instance_id
             )
-            VALUES (?, ?, ?, ?, ?, ?, 'pending_questions')
+            VALUES (?, ?, ?, ?, ?, ?, 'pending_questions', ?, ?)
             """,
-            (child_id, day, start, end, title, chapter_text),
+            (
+                child_id,
+                day,
+                start,
+                end,
+                title,
+                chapter_text,
+                linked_task_completion_id,
+                linked_task_instance_id,
+            ),
         )
         return int(cursor.lastrowid)
 
@@ -1443,6 +1462,8 @@ def get_reading_log(log_id: int) -> dict | None:
                 rl.chatbot_provider,
                 rl.parent_override_by,
                 rl.parent_override_at,
+                rl.linked_task_completion_id,
+                rl.linked_task_instance_id,
                 rl.credit_completion_id,
                 rl.created_at,
                 rl.evaluated_at
@@ -1500,6 +1521,8 @@ def list_reading_logs(
                 rl.chatbot_provider,
                 rl.parent_override_by,
                 rl.parent_override_at,
+                rl.linked_task_completion_id,
+                rl.linked_task_instance_id,
                 rl.credit_completion_id,
                 rl.created_at,
                 rl.evaluated_at
@@ -1532,6 +1555,114 @@ def set_reading_log_questions(log_id: int, question_1: str, question_2: str, cha
             (q1, q2, chatbot_provider.strip(), log_id),
         )
         return cursor.rowcount > 0
+
+
+def update_reading_log_details(
+    log_id: int,
+    child_id: int,
+    read_date: str | date,
+    start_time: str,
+    end_time: str,
+    book_title: str,
+    chapters: str,
+) -> bool:
+    day = _as_date(read_date).isoformat()
+    start = _as_hhmm(start_time)
+    end = _as_hhmm(end_time)
+    if end <= start:
+        raise ValueError("End time must be after start time")
+    title = book_title.strip()
+    chapter_text = chapters.strip()
+    if not title:
+        raise ValueError("Book title is required")
+    if not chapter_text:
+        raise ValueError("Chapters are required")
+    with get_connection() as conn:
+        cursor = conn.execute(
+            """
+            UPDATE reading_logs
+            SET read_date = ?,
+                start_time = ?,
+                end_time = ?,
+                book_title = ?,
+                chapters = ?,
+                question_1 = '',
+                question_2 = '',
+                answer_1 = '',
+                answer_2 = '',
+                score = 0,
+                passed = 0,
+                status = 'pending_questions',
+                chatbot_provider = '',
+                evaluated_at = NULL
+            WHERE id = ?
+              AND child_id = ?
+              AND credit_completion_id IS NULL
+            """,
+            (day, start, end, title, chapter_text, log_id, child_id),
+        )
+        return cursor.rowcount > 0
+
+
+def ensure_reading_log_for_task_completion(completion_id: int) -> int | None:
+    with get_connection() as conn:
+        existing = conn.execute(
+            """
+            SELECT id
+            FROM reading_logs
+            WHERE linked_task_completion_id = ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (completion_id,),
+        ).fetchone()
+        if existing:
+            return int(existing["id"])
+
+        row = conn.execute(
+            """
+            SELECT
+                tc.id AS completion_id,
+                tc.child_id,
+                tc.task_instance_id,
+                ti.due_date,
+                t.name AS task_name
+            FROM task_completions tc
+            JOIN tasks t ON t.id = tc.task_id
+            LEFT JOIN task_instances ti ON ti.id = tc.task_instance_id
+            WHERE tc.id = ?
+            """,
+            (completion_id,),
+        ).fetchone()
+        if not row:
+            raise ValueError("Task completion not found")
+        task_name = str(row["task_name"] or "").strip().lower()
+        if "read" not in task_name:
+            return None
+        read_date = str(row["due_date"] or date.today().isoformat())
+        cursor = conn.execute(
+            """
+            INSERT INTO reading_logs (
+                child_id,
+                read_date,
+                start_time,
+                end_time,
+                book_title,
+                chapters,
+                status,
+                linked_task_completion_id,
+                linked_task_instance_id
+            )
+            VALUES (?, ?, '', '', '', '', 'pending_questions', ?, ?)
+            """,
+            (
+                int(row["child_id"]),
+                read_date,
+                completion_id,
+                row["task_instance_id"],
+            ),
+        )
+        return int(cursor.lastrowid)
 
 
 def update_reading_log_quiz_result(
@@ -1603,6 +1734,42 @@ def award_reading_log_credit(log_id: int, reviewed_by: str = "Reading Bot") -> i
     existing = log.get("credit_completion_id")
     if existing:
         return int(existing)
+    linked_completion_id = int(log.get("linked_task_completion_id") or 0)
+    if linked_completion_id:
+        with get_connection() as conn:
+            linked = conn.execute(
+                """
+                SELECT status
+                FROM task_completions
+                WHERE id = ?
+                """,
+                (linked_completion_id,),
+            ).fetchone()
+            if linked and str(linked["status"]) == "pending":
+                review_task_completion(
+                    completion_id=linked_completion_id,
+                    decision="approved",
+                    reviewed_by=reviewed_by,
+                    review_note="Auto-approved after reading quiz pass",
+                )
+            linked_after = conn.execute(
+                """
+                SELECT status
+                FROM task_completions
+                WHERE id = ?
+                """,
+                (linked_completion_id,),
+            ).fetchone()
+            if linked_after and str(linked_after["status"]) == "approved":
+                conn.execute(
+                    """
+                    UPDATE reading_logs
+                    SET credit_completion_id = ?
+                    WHERE id = ?
+                    """,
+                    (linked_completion_id, log_id),
+                )
+                return linked_completion_id
     task_id = _find_reading_credit_task_id()
     completion_id = record_task_completion(
         child_id=int(log["child_id"]),

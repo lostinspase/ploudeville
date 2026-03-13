@@ -31,6 +31,7 @@ from src.family_system.repository import (
     list_pet_species,
     list_service_organizations,
     list_service_entries,
+    list_task_completions,
     list_task_schedules,
     list_tasks,
     list_wallet_payouts,
@@ -1109,6 +1110,81 @@ def test_reading_log_quiz_pass_awards_task_credit(tmp_path) -> None:
     assert allowance >= 1.0
 
 
+def test_reading_task_check_in_appears_on_reading_tab_and_auto_approves_same_completion(tmp_path) -> None:
+    db.DATA_DIR = tmp_path
+    db.DB_PATH = tmp_path / "test_family.db"
+    db.init_db()
+    child_id = add_or_update_child("Gracelyn", 7)
+    set_child_pin(child_id, "1234")
+    task_id = add_task("Read 20 minutes", "required", "allowance", 1)
+    add_task_schedule(task_id=task_id, cadence="daily", child_id=child_id, due_time="17:00")
+    generate_task_instances("2026-02-17", "2026-02-17")
+
+    due = list_due_task_instances(child_id=child_id, due_date="2026-02-17")
+    assert len(due) == 1
+    instance_id = int(due[0]["id"])
+
+    cookie = f"{web.COOKIE_NAME}={child_id}:{web._sign_child(child_id)}"
+    status_submit, _ = _invoke_app(
+        "/submit-instance",
+        method="POST",
+        body=f"child_id={child_id}&instance_id={instance_id}&note=done",
+        cookie=cookie,
+    )
+    assert status_submit.startswith("303")
+
+    logs = list_reading_logs(child_id=child_id, limit=10)
+    assert len(logs) == 1
+    log = logs[0]
+    log_id = int(log["id"])
+    linked_completion_id = int(log["linked_task_completion_id"])
+    assert log["book_title"] == ""
+    assert log["chapters"] == ""
+    assert log["credit_completion_id"] is None
+
+    status_child, content_child = _invoke_app(f"/child?child_id={child_id}", cookie=cookie)
+    assert status_child.startswith("200")
+    child_html = content_child.decode("utf-8")
+    assert "Reading task check-in" in child_html
+    assert "Save Details + Get Quiz" in child_html
+
+    status_details, _ = _invoke_app(
+        "/submit-reading-log",
+        method="POST",
+        body=(
+            f"child_id={child_id}&log_id={log_id}&read_date=2026-02-17&start_time=16%3A30&end_time=17%3A00"
+            "&book_title=Magic+Tree+House&chapters=Chapter+4"
+        ),
+        cookie=cookie,
+    )
+    assert status_details.startswith("303")
+
+    updated_log = list_reading_logs(child_id=child_id, limit=10)[0]
+    assert updated_log["status"] == "awaiting_answers"
+    assert str(updated_log["question_1"]).strip()
+    assert str(updated_log["question_2"]).strip()
+
+    status_answer, _ = _invoke_app(
+        "/answer-reading-quiz",
+        method="POST",
+        body=(
+            f"child_id={child_id}&log_id={log_id}"
+            "&answer_1=Jack+and+Annie+solved+the+problem+by+paying+attention+to+the+clues+in+the+chapter."
+            "&answer_2=The+chapter+showed+that+being+curious+and+brave+helps+them+learn+and+help+others."
+        ),
+        cookie=cookie,
+    )
+    assert status_answer.startswith("303")
+
+    passed_log = list_reading_logs(child_id=child_id, limit=10)[0]
+    assert passed_log["status"] == "passed"
+    assert int(passed_log["passed"]) == 1
+    assert int(passed_log["credit_completion_id"]) == linked_completion_id
+
+    approved = list_task_completions(status="approved", child_id=child_id)
+    assert any(int(row["id"]) == linked_completion_id for row in approved)
+
+
 def test_reading_log_quiz_fail_does_not_award_credit(tmp_path) -> None:
     db.DATA_DIR = tmp_path
     db.DB_PATH = tmp_path / "test_family.db"
@@ -1139,6 +1215,53 @@ def test_reading_log_quiz_fail_does_not_award_credit(tmp_path) -> None:
     assert top["status"] == "failed"
     assert int(top["passed"]) == 0
     assert top["credit_completion_id"] is None
+
+
+def test_failed_linked_reading_quiz_keeps_task_pending_for_parent_review(tmp_path) -> None:
+    db.DATA_DIR = tmp_path
+    db.DB_PATH = tmp_path / "test_family.db"
+    db.init_db()
+    child_id = add_or_update_child("Gracelyn", 7)
+    set_child_pin(child_id, "1234")
+    task_id = add_task("Read Chapter", "required", "allowance", 1)
+    add_task_schedule(task_id=task_id, cadence="daily", child_id=child_id, due_time="17:00")
+    generate_task_instances("2026-02-17", "2026-02-17")
+
+    instance_id = int(list_due_task_instances(child_id=child_id, due_date="2026-02-17")[0]["id"])
+    cookie = f"{web.COOKIE_NAME}={child_id}:{web._sign_child(child_id)}"
+    _invoke_app(
+        "/submit-instance",
+        method="POST",
+        body=f"child_id={child_id}&instance_id={instance_id}&note=done",
+        cookie=cookie,
+    )
+
+    log = list_reading_logs(child_id=child_id, limit=10)[0]
+    log_id = int(log["id"])
+    linked_completion_id = int(log["linked_task_completion_id"])
+
+    _invoke_app(
+        "/submit-reading-log",
+        method="POST",
+        body=(
+            f"child_id={child_id}&log_id={log_id}&read_date=2026-02-17&start_time=16%3A30&end_time=17%3A00"
+            "&book_title=Short+Book&chapters=1"
+        ),
+        cookie=cookie,
+    )
+    _invoke_app(
+        "/answer-reading-quiz",
+        method="POST",
+        body=f"child_id={child_id}&log_id={log_id}&answer_1=It+was+good.&answer_2=Nice.",
+        cookie=cookie,
+    )
+
+    failed_log = list_reading_logs(child_id=child_id, limit=10)[0]
+    assert failed_log["status"] == "failed"
+    assert failed_log["credit_completion_id"] is None
+
+    pending = list_task_completions(status="pending", child_id=child_id)
+    assert any(int(row["id"]) == linked_completion_id for row in pending)
 
 
 def test_parent_page_shows_reading_review_table(tmp_path) -> None:
